@@ -1,0 +1,250 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Camp {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  address   String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  groups    Group[]
+}
+
+model User {
+  id                    Int                     @id @default(autoincrement())
+  fullName              String
+  mobile                String                  @unique
+  email                 String?                 @unique
+  password              String
+  gender                Gender
+  profilePhoto          String?
+  role                  UserRole                @default(VOLUNTEER)
+  status                UserStatus              @default(PENDING)
+  isActive              Boolean                 @default(true)
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  college               String?
+  groupId               Int?
+  announcements         Announcement[]
+  attendances           Attendance[]
+  marks                 Mark[]
+  replacementSchedules  Schedule[]              @relation("ReplacementVolunteer")
+  primarySchedules      Schedule[]              @relation("PrimaryVolunteer")
+  reports               TeachingReport[]
+  group                 Group?                  @relation(fields: [groupId], references: [id])
+  volunteerAttendances  VolunteerAttendance[]
+  availabilityResponses VolunteerAvailability[]
+  pushSubscriptions PushSubscription[]
+}
+
+model Group {
+  id                   Int                   @id @default(autoincrement())
+  name                 String
+  description          String?
+  isActive             Boolean               @default(true)
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  campId               Int
+  attendances          Attendance[]          @relation("GroupAttendance")
+  camp                 Camp                  @relation(fields: [campId], references: [id])
+  schedules            Schedule[]
+  students             Student[]
+  reports              TeachingReport[]
+  users                User[]
+  volunteerAttendances VolunteerAttendance[]
+
+  @@unique([campId, name])
+}
+
+model Student {
+  id           Int          @id @default(autoincrement())
+  studentCode  String       @unique
+  fullName     String
+  fatherName   String?
+  motherName   String?
+  gender       Gender
+  dob          DateTime?
+  phone        String?
+  address      String?
+  profilePhoto String?
+  isActive     Boolean      @default(true)
+  groupId      Int
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  attendances  Attendance[]
+  marks        Mark[]
+  group        Group        @relation(fields: [groupId], references: [id])
+}
+
+model TeachingReport {
+  id            Int         @id @default(autoincrement())
+  reportDate    DateTime
+  subject       SubjectType
+  whatTaught    String
+  homework      String?
+  nextClassPlan String?
+  photo         String?
+  volunteerId   Int
+  groupId       Int
+  createdAt     DateTime    @default(now())
+  group         Group       @relation(fields: [groupId], references: [id])
+  volunteer     User        @relation(fields: [volunteerId], references: [id])
+}
+
+model Attendance {
+  id                Int      @id @default(autoincrement())
+  studentId         Int
+  createdAt         DateTime @default(now())
+  attendanceDate    DateTime @default(now())
+  groupId           Int
+  homeworkSubmitted Boolean  @default(false)
+  isPresent         Boolean
+  remarks           String?
+  volunteerId       Int
+  group             Group    @relation("GroupAttendance", fields: [groupId], references: [id])
+  student           Student  @relation(fields: [studentId], references: [id])
+  volunteer         User     @relation(fields: [volunteerId], references: [id])
+
+  @@unique([studentId, attendanceDate])
+}
+
+model VolunteerAttendance {
+  id             Int      @id @default(autoincrement())
+  attendanceDate DateTime
+  volunteerId    Int
+  groupId        Int
+  isPresent      Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  group          Group    @relation(fields: [groupId], references: [id])
+  volunteer      User     @relation(fields: [volunteerId], references: [id])
+
+  @@unique([volunteerId, groupId, attendanceDate])
+}
+
+model Mark {
+  id          Int         @id @default(autoincrement())
+  exam        String
+  subject     SubjectType
+  marks       Int
+  studentId   Int
+  volunteerId Int
+  createdAt   DateTime    @default(now())
+  maxMarks    Int
+  remarks     String?
+  student     Student     @relation(fields: [studentId], references: [id])
+  volunteer   User        @relation(fields: [volunteerId], references: [id])
+}
+
+model Schedule {
+  id                     Int                     @id @default(autoincrement())
+  volunteerId            Int
+  groupId                Int
+  subject                SubjectType?
+  teachingDay            String
+  teachingTime           String
+  isHoliday              Boolean                 @default(false)
+  status                 String                  @default("ACTIVE")
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  replacementVolunteerId Int?
+  group                  Group                   @relation(fields: [groupId], references: [id])
+  replacementVolunteer   User?                   @relation("ReplacementVolunteer", fields: [replacementVolunteerId], references: [id])
+  volunteer              User                    @relation("PrimaryVolunteer", fields: [volunteerId], references: [id])
+  availabilityResponses  VolunteerAvailability[]
+}
+
+model VolunteerAvailability {
+  id                 Int      @id @default(autoincrement())
+  volunteerId        Int
+  scheduleId         Int
+  date               DateTime @default(now())
+  status             String
+  reason             String?
+  alternativeName    String?
+  alternativeMobile  String?
+  alternativeMessage String?
+  approvedBy         Int?
+  createdAt          DateTime @default(now())
+  schedule           Schedule @relation(fields: [scheduleId], references: [id])
+  volunteer          User     @relation(fields: [volunteerId], references: [id])
+}
+
+model Announcement {
+  id         Int      @id @default(autoincrement())
+  title      String
+  message    String
+  targetType String
+  targetId   Int?
+  createdBy  Int
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  admin      User     @relation(fields: [createdBy], references: [id])
+}
+
+enum UserRole {
+  ADMIN
+  VOLUNTEER
+}
+
+enum UserStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+}
+
+enum SubjectType {
+  ENGLISH
+  HINDI
+  MATHS
+  SCIENCE
+  GK
+  COMPUTER
+  ART
+  ACTIVITY
+  MORAL_EDUCATION
+  OTHER
+}
+
+// ======================================
+// PUSH NOTIFICATION SUBSCRIPTION
+// ======================================
+
+model PushSubscription {
+
+  id          Int      @id @default(autoincrement())
+
+  userId      Int
+
+  endpoint    String   @unique
+
+  p256dh      String
+
+  auth        String
+
+  createdAt   DateTime @default(now())
+
+  updatedAt   DateTime @updatedAt
+
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+}

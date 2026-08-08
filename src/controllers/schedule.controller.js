@@ -5,85 +5,70 @@ const prisma = require("../config/prisma");
 // GET ALL SCHEDULES
 // ======================================
 
-exports.getAllSchedules = async (req,res)=>{
+exports.getAllSchedules = async (req, res) => {
 
-    try{
+    try {
 
+        const schedules = await prisma.schedule.findMany({
 
-        const schedules =
-        await prisma.schedule.findMany({
+            orderBy: {
+                id: "desc"
+            },
 
-            include:{
+            select: {
 
+                id: true,
+                volunteerId: true,
+                groupId: true,
+                subject: true,
+                teachingDay: true,
+                teachingTime: true,
+                isHoliday: true,
+                status: true,
 
-                volunteer:{
-
-                    select:{
-
-                        id:true,
-
-                        fullName:true
-
+                volunteer: {
+                    select: {
+                        id: true,
+                        fullName: true,
+                        mobile: true
                     }
-
                 },
 
+                group: {
+                    select: {
+                        id: true,
+                        name: true,
 
-                group:{
-
-                    include:{
-
-                        camp:true
-
+                        camp: {
+                            select: {
+                                id: true,
+                                name: true
+                            }
+                        }
                     }
-
                 }
-
 
             }
 
         });
 
-
-
         return res.json({
-
-            success:true,
-
-            data:schedules
-
+            success: true,
+            data: schedules
         });
 
+    } catch (error) {
 
-    }
-
-    catch(error){
-
-
-        console.error(
-            "Get Schedule Error:",
-            error
-        );
-
+        console.error("Get Schedule Error:", error);
 
         return res.status(500).json({
-
-            success:false,
-
-            message:
-            "Unable to fetch schedules."
-
+            success: false,
+            message: "Unable to fetch schedules."
         });
-
 
     }
 
 };
-
-
-
-
-
 // ======================================
 // CREATE SCHEDULE
 // ======================================
@@ -390,17 +375,26 @@ exports.deleteSchedule = async(req,res)=>{
 
 
 
+await prisma.volunteerAvailability.deleteMany({
+    where: {
+        scheduleId: id
+    }
+});
+       await prisma.$transaction([
 
-        await prisma.schedule.delete({
+    prisma.volunteerAvailability.deleteMany({
+        where: {
+            scheduleId: id
+        }
+    }),
 
-            where:{
+    prisma.schedule.delete({
+        where: {
+            id
+        }
+    })
 
-                id
-
-            }
-
-        });
-
+]);
 
 
 

@@ -28,7 +28,16 @@ router.get(
     authMiddleware,
     volunteerController.getDashboard
 );
+// ======================================
+// Volunteer - Today's Class
+// Lightweight endpoint for Add Report
+// ======================================
 
+router.get(
+    "/today-class",
+    authMiddleware,
+    volunteerController.getTodayClass
+);
 
 // ======================================
 // Volunteer - My Students

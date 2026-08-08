@@ -5,6 +5,11 @@ const router = express.Router();
 const groupController = require("../controllers/group.controller");
 
 // =====================================
+// Get Groups Dropdown
+// =====================================
+router.get("/dropdown", groupController.getGroupsDropdown);
+
+// =====================================
 // Get All Groups
 // =====================================
 router.get("/", groupController.getAllGroups);

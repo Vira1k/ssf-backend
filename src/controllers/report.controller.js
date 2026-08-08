@@ -1,8 +1,14 @@
 const PDFDocument = require("pdfkit");
-const { PrismaClient } = require("@prisma/client");
+const prisma = require("../config/prisma");
 
-const prisma = new PrismaClient();
+// ======================================
+// REPORT CACHE
+// ======================================
 
+let reportsCache = null;
+let reportsCacheTime = 0;
+
+const REPORT_CACHE_DURATION = 60000; // 60 Seconds
 // ======================================
 // ADD TEACHING REPORT
 // ======================================
@@ -22,61 +28,104 @@ exports.addReport = async (req, res) => {
             reportDate
         } = req.body;
 
+        // ==============================
+        // VALIDATION
+        // ==============================
+
         if (!groupId || !subject || !whatTaught) {
 
             return res.status(400).json({
 
                 success: false,
 
-                message: "Group, Subject and What Taught are required."
+                message:
+                    "Group, Subject and What Taught are required."
 
             });
 
         }
 
-        const report = await prisma.teachingReport.create({
+        // ==============================
+        // CREATE REPORT
+        // ==============================
 
-            data: {
+        const report =
+            await prisma.teachingReport.create({
 
-                volunteerId,
+                data: {
 
-                groupId: Number(groupId),
+                    volunteerId,
 
-                subject,
+                    groupId: Number(groupId),
 
-                whatTaught,
+                    subject,
 
-                homework,
+                    whatTaught,
 
-                nextClassPlan,
+                    homework: homework || null,
 
-                reportDate: reportDate
-                    ? new Date(reportDate)
-                    : new Date()
+                    nextClassPlan:
+                        nextClassPlan || null,
 
-            }
+                    reportDate:
+                        reportDate
+                            ? new Date(reportDate)
+                            : new Date()
 
-        });
+                },
 
-        res.status(201).json({
+                select: {
+
+                    id: true,
+
+                    reportDate: true,
+
+                    subject: true,
+
+                    whatTaught: true,
+
+                    homework: true,
+
+                    nextClassPlan: true,
+
+                    volunteerId: true,
+
+                    groupId: true
+
+                }
+
+            });
+
+        // ==============================
+        // RESPONSE
+        // ==============================
+
+        return res.status(201).json({
 
             success: true,
 
-            message: "Teaching report submitted successfully.",
+            message:
+                "Teaching report submitted successfully.",
 
             data: report
 
         });
 
-    } catch (error) {
+    }
 
-        console.error("Add Report Error:", error);
+    catch (error) {
 
-        res.status(500).json({
+        console.error(
+            "Add Report Error:",
+            error
+        );
+
+        return res.status(500).json({
 
             success: false,
 
-            message: "Failed to submit report."
+            message:
+                "Failed to submit report."
 
         });
 
@@ -92,51 +141,48 @@ exports.getAllReports = async (req, res) => {
 
     try {
 
+        if (
+    reportsCache &&
+    (Date.now() - reportsCacheTime) < REPORT_CACHE_DURATION &&
+    Number(req.query.limit) === 5
+) {
+    return res.status(200).json(reportsCache);
+}
+
         const reports = await prisma.teachingReport.findMany({
 
-            include: {
+    take: Number(req.query.limit) || undefined,
 
-                volunteer: {
+    include: {
 
-                    select: {
-
-                        id: true,
-
-                        fullName: true
-
-                    }
-
-                },
-
-                group: {
-
-                    include: {
-
-                        camp: {
-
-                            select: {
-
-                                id: true,
-
-                                name: true
-
-                            }
-
-                        }
-
-                    }
-
-                }
-
-            },
-
-            orderBy: {
-
-                reportDate: "desc"
-
+        volunteer: {
+            select: {
+                id: true,
+                fullName: true
             }
+        },
 
-        });
+        group: {
+    select: {
+        id: true,
+        name: true,
+        camp: {
+            select: {
+                id: true,
+                name: true
+            }
+        }
+    }
+}
+
+    },
+
+    orderBy: {
+        reportDate: "desc"
+    }
+
+});
+ 
 
         const formattedReports = reports.map(report => ({
 
@@ -178,15 +224,19 @@ exports.getAllReports = async (req, res) => {
 
         }));
 
-        res.status(200).json({
+       reportsCache = {
 
-            success: true,
+    success: true,
 
-            count: formattedReports.length,
+    count: formattedReports.length,
 
-            data: formattedReports
+    data: formattedReports
 
-        });
+};
+
+reportsCacheTime = Date.now();
+
+return res.status(200).json(reportsCache);
 
     } catch (error) {
 
@@ -227,24 +277,18 @@ exports.downloadReportsPDF = async (req, res) => {
 
                 },
 
-
-                group: {
-
-                    include: {
-
-                        camp: {
-
-                            select: {
-
-                                name:true
-
-                            }
-
-                        }
-
-                    }
-
-                }
+group: {
+    select: {
+        id: true,
+        name: true,
+        camp: {
+            select: {
+                id: true,
+                name: true
+            }
+        }
+    }
+}
 
             },
 

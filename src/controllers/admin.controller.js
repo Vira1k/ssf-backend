@@ -1,39 +1,42 @@
 const prisma = require("../config/prisma");
 
 // ======================================
-// GET ALL PENDING VOLUNTEERS
+// DASHBOARD CACHE
 // ======================================
 
-exports.getPendingVolunteers = async (req, res) => {
+let dashboardCache = null;
+let dashboardCacheTime = 0;
+
+const CACHE_DURATION = 60000;
+
+// ======================================
+// PENDING CACHE
+// ======================================
+
+let pendingCache = null;
+let pendingCacheTime = 0;
+
+const PENDING_CACHE_DURATION = 60000;
+exports.getAllVolunteers = async (req, res) => {
 
     try {
 
         const volunteers = await prisma.user.findMany({
 
             where: {
-
-                role: "VOLUNTEER",
-
-                status: "PENDING"
-
+                role: "VOLUNTEER"
             },
 
-            select: {
+           select: {
+    id: true,
+    fullName: true,
+    mobile: true,
+    email: true,
+    status: true
+},
 
-                id: true,
-
-                fullName: true,
-
-                mobile: true,
-
-                email: true,
-
-                gender: true,
-
-                status: true,
-
-                createdAt: true
-
+            orderBy: {
+                fullName: "asc"
             }
 
         });
@@ -42,15 +45,13 @@ exports.getPendingVolunteers = async (req, res) => {
 
             success: true,
 
-            count: volunteers.length,
-
             volunteers
 
         });
 
     } catch (error) {
 
-        console.error(error);
+        console.error("getAllVolunteers:", error);
 
         return res.status(500).json({
 
@@ -63,7 +64,6 @@ exports.getPendingVolunteers = async (req, res) => {
     }
 
 };
-
 // ======================================
 // APPROVE VOLUNTEER
 // ======================================
@@ -72,23 +72,44 @@ exports.approveVolunteer = async (req, res) => {
 
     try {
 
-        const { id } = req.params;
+        const id = Number(req.params.id);
 
-        const volunteer = await prisma.user.update({
+        if (!Number.isInteger(id)) {
+
+            return res.status(400).json({
+                success: false,
+                message: "Invalid volunteer ID."
+            });
+
+        }
+
+        const updatedVolunteer = await prisma.user.update({
 
             where: {
-
-                id: Number(id)
-
+                id
             },
 
             data: {
-
                 status: "APPROVED"
+            },
 
+            select: {
+                id: true,
+                fullName: true,
+                mobile: true,
+                email: true,
+                status: true
             }
 
         });
+
+      // Clear Dashboard Cache
+dashboardCache = null;
+dashboardCacheTime = 0;
+
+// Clear Pending Cache
+pendingCache = null;
+pendingCacheTime = 0;
 
         return res.status(200).json({
 
@@ -96,13 +117,25 @@ exports.approveVolunteer = async (req, res) => {
 
             message: "Volunteer approved successfully.",
 
-            volunteer
+            volunteer: updatedVolunteer
 
         });
 
     } catch (error) {
 
-        console.error(error);
+        if (error.code === "P2025") {
+
+            return res.status(404).json({
+
+                success: false,
+
+                message: "Volunteer not found."
+
+            });
+
+        }
+
+        console.error("approveVolunteer:", error);
 
         return res.status(500).json({
 
@@ -124,23 +157,47 @@ exports.rejectVolunteer = async (req, res) => {
 
     try {
 
-        const { id } = req.params;
+        const id = Number(req.params.id);
 
-        const volunteer = await prisma.user.update({
+        if (!Number.isInteger(id)) {
+
+            return res.status(400).json({
+
+                success: false,
+
+                message: "Invalid volunteer ID."
+
+            });
+
+        }
+
+        const updatedVolunteer = await prisma.user.update({
 
             where: {
-
-                id: Number(id)
-
+                id
             },
 
             data: {
-
                 status: "REJECTED"
+            },
 
+            select: {
+                id: true,
+                fullName: true,
+                mobile: true,
+                email: true,
+                status: true
             }
 
         });
+
+     // Clear Dashboard Cache
+dashboardCache = null;
+dashboardCacheTime = 0;
+
+// Clear Pending Cache
+pendingCache = null;
+pendingCacheTime = 0;
 
         return res.status(200).json({
 
@@ -148,15 +205,86 @@ exports.rejectVolunteer = async (req, res) => {
 
             message: "Volunteer rejected successfully.",
 
-            volunteer
+            volunteer: updatedVolunteer
+
+        });
+
+    } catch (error) {
+
+        if (error.code === "P2025") {
+
+            return res.status(404).json({
+
+                success: false,
+
+                message: "Volunteer not found."
+
+            });
+
+        }
+
+        console.error("rejectVolunteer:", error);
+
+        return res.status(500).json({
+
+            success: false,
+
+            message: "Internal Server Error"
 
         });
 
     }
 
-    catch (error) {
+};
+// ======================================
+// GET ALL PENDING VOLUNTEERS
+// ======================================
 
-        console.error(error);
+exports.getPendingVolunteers = async (req, res) => {
+
+    try {
+        if (
+    pendingCache &&
+    (Date.now() - pendingCacheTime) < PENDING_CACHE_DURATION
+) {
+    return res.status(200).json(pendingCache);
+}
+
+        const volunteers = await prisma.user.findMany({
+
+            where: {
+                role: "VOLUNTEER",
+                status: "PENDING"
+            },
+
+            select: {
+                id: true,
+                fullName: true,
+                mobile: true,
+                email: true,
+                gender: true,
+                status: true,
+                createdAt: true
+            },
+
+            orderBy: {
+                createdAt: "desc"
+            }
+
+        });
+
+      pendingCache = {
+    success: true,
+    volunteers
+};
+
+pendingCacheTime = Date.now();
+
+return res.status(200).json(pendingCache);
+
+    } catch (error) {
+
+        console.error("getPendingVolunteers:", error);
 
         return res.status(500).json({
 
@@ -177,35 +305,48 @@ exports.getDashboardStats = async (req, res) => {
 
     try {
 
-        const totalVolunteers = await prisma.user.count({
+        // Return Cached Data
+        if (
+            dashboardCache &&
+            (Date.now() - dashboardCacheTime) < CACHE_DURATION
+        ) {
 
-            where: {
+            return res.status(200).json(dashboardCache);
 
-                role: "VOLUNTEER",
+        }
 
-                status: "APPROVED"
+        const [
+            totalVolunteers,
+            pendingVolunteers,
+            totalStudents,
+            totalGroups
+        ] = await Promise.all([
 
-            }
+            prisma.user.count({
 
-        });
+                where: {
+                    role: "VOLUNTEER",
+                    status: "APPROVED"
+                }
 
-        const pendingVolunteers = await prisma.user.count({
+            }),
 
-            where: {
+            prisma.user.count({
 
-                role: "VOLUNTEER",
+                where: {
+                    role: "VOLUNTEER",
+                    status: "PENDING"
+                }
 
-                status: "PENDING"
+            }),
 
-            }
+            prisma.student.count(),
 
-        });
+            prisma.group.count()
 
-        const totalStudents = await prisma.student.count();
+        ]);
 
-        const totalGroups = await prisma.group.count();
-
-        return res.status(200).json({
+        dashboardCache = {
 
             success: true,
 
@@ -217,82 +358,17 @@ exports.getDashboardStats = async (req, res) => {
 
             totalGroups
 
-        });
+        };
 
-    } catch (error) {
+        dashboardCacheTime = Date.now();
 
-        console.error(error);
-
-        return res.status(500).json({
-
-            success: false,
-
-            message: "Internal Server Error"
-
-        });
-
-    }
-
-};
-// ======================================
-// GET ALL VOLUNTEERS
-// ======================================
-
-exports.getAllVolunteers = async (req, res) => {
-
-    try {
-
-        const volunteers = await prisma.user.findMany({
-
-            where: {
-
-                role: "VOLUNTEER"
-
-            },
-
-            orderBy: {
-
-                createdAt: "desc"
-
-            },
-
-            select: {
-
-                id: true,
-
-                fullName: true,
-
-                mobile: true,
-
-                email: true,
-
-                gender: true,
-
-                status: true,
-
-                isActive: true,
-
-                createdAt: true
-
-            }
-
-        });
-
-        return res.status(200).json({
-
-            success: true,
-
-            count: volunteers.length,
-
-            volunteers
-
-        });
+        return res.status(200).json(dashboardCache);
 
     }
 
     catch (error) {
 
-        console.error(error);
+        console.error("getDashboardStats:", error);
 
         return res.status(500).json({
 
@@ -305,9 +381,10 @@ exports.getAllVolunteers = async (req, res) => {
     }
 
 };
-// =======================================
-// Get Approved Volunteers
-// =======================================
+
+// ======================================
+// GET APPROVED VOLUNTEERS
+// ======================================
 
 exports.getApprovedVolunteers = async (req, res) => {
 
@@ -343,11 +420,11 @@ exports.getApprovedVolunteers = async (req, res) => {
 
         });
 
-        res.json({
+        return res.status(200).json({
 
             success: true,
 
-            data: volunteers
+            volunteers
 
         });
 
@@ -355,16 +432,17 @@ exports.getApprovedVolunteers = async (req, res) => {
 
     catch (error) {
 
-        console.error(error);
+        console.error("getApprovedVolunteers:", error);
 
-        res.status(500).json({
+        return res.status(500).json({
 
             success: false,
 
-            message: "Unable to fetch approved volunteers."
+            message: "Internal Server Error"
 
         });
 
     }
 
 };
+ 

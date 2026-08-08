@@ -12,7 +12,6 @@ exports.getMyProfile = async (req, res) => {
 
         const userId = Number(req.user.id);
 
-
         const user = await prisma.user.findUnique({
 
             where: {
@@ -30,68 +29,47 @@ exports.getMyProfile = async (req, res) => {
                 profilePhoto: true,
                 role: true,
                 status: true,
-                isActive: true,
                 createdAt: true,
-                updatedAt: true,
 
-                group: {
+                primarySchedules: {
+
+                    where: {
+                        status: "ACTIVE"
+                    },
 
                     select: {
 
                         id: true,
-                        name: true,
+                        subject: true,
+                        teachingDay: true,
+                        teachingTime: true,
 
-                        camp: {
+                        group: {
 
                             select: {
+
                                 id: true,
                                 name: true,
-                                address: true
+
+                                camp: {
+
+                                    select: {
+
+                                        id: true,
+                                        name: true,
+                                        address: true
+
+                                    }
+
+                                }
+
                             }
 
                         }
 
                     }
 
-                },
-
-            primarySchedules: {
-
-    where: {
-        status: "ACTIVE"
-    },
-
-    select: {
-
-        id: true,
-        subject: true,
-        teachingDay: true,
-        teachingTime: true,
-
-        group: {
-
-            select: {
-
-                id: true,
-                name: true,
-
-                camp: {
-
-                    select: {
-                        id: true,
-                        name: true,
-                        address: true
-                    }
-
                 }
-
-            }
-
-        }
-
-    }
-
-}   
 
             }
 
@@ -126,7 +104,6 @@ exports.getMyProfile = async (req, res) => {
             error
         );
 
-
         return res.status(500).json({
 
             success: false,
@@ -137,9 +114,6 @@ exports.getMyProfile = async (req, res) => {
     }
 
 };
-
-
-
 // ======================================
 // ADMIN - GET VOLUNTEER PROFILE
 // ======================================
@@ -148,7 +122,9 @@ exports.getVolunteerProfile = async (req, res) => {
 
     try {
 
-        // Only admin
+        // ======================================
+        // ADMIN ONLY
+        // ======================================
 
         if (req.user.role !== "ADMIN") {
 
@@ -161,6 +137,10 @@ exports.getVolunteerProfile = async (req, res) => {
 
         }
 
+
+        // ======================================
+        // VOLUNTEER ID
+        // ======================================
 
         const volunteerId =
             Number(req.params.id);
@@ -178,12 +158,17 @@ exports.getVolunteerProfile = async (req, res) => {
         }
 
 
+        // ======================================
+        // GET VOLUNTEER
+        // ======================================
+
         const volunteer =
             await prisma.user.findFirst({
 
                 where: {
 
                     id: volunteerId,
+
                     role: "VOLUNTEER"
 
                 },
@@ -201,7 +186,6 @@ exports.getVolunteerProfile = async (req, res) => {
                     status: true,
                     isActive: true,
                     createdAt: true,
-                    updatedAt: true,
 
                     group: {
 
@@ -213,69 +197,27 @@ exports.getVolunteerProfile = async (req, res) => {
                             camp: {
 
                                 select: {
+
                                     id: true,
                                     name: true,
                                     address: true
+
                                 }
 
                             }
 
                         }
 
-                    },
-
-                   primarySchedules: {
-
-    where: {
-        status: "ACTIVE"
-    },
-
-    select: {
-
-        id: true,
-
-        subject: true,
-
-        teachingDay: true,
-
-        teachingTime: true,
-
-
-        group: {
-
-            select: {
-
-                id: true,
-
-                name: true,
-
-
-                camp: {
-
-                    select: {
-
-                        id: true,
-
-                        name: true,
-
-                        address: true
-
                     }
-
-                }
-
-            }
-
-        }
-
-    }
-
-}
 
                 }
 
             });
 
+
+        // ======================================
+        // NOT FOUND
+        // ======================================
 
         if (!volunteer) {
 
@@ -288,6 +230,10 @@ exports.getVolunteerProfile = async (req, res) => {
 
         }
 
+
+        // ======================================
+        // RESPONSE
+        // ======================================
 
         return res.status(200).json({
 
@@ -305,7 +251,6 @@ exports.getVolunteerProfile = async (req, res) => {
             error
         );
 
-
         return res.status(500).json({
 
             success: false,
@@ -316,9 +261,6 @@ exports.getVolunteerProfile = async (req, res) => {
     }
 
 };
-
-
-
 // ======================================
 // UPDATE MY PROFILE
 // ======================================

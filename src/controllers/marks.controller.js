@@ -241,8 +241,108 @@ exports.saveMarks = async (req, res) => {
 
 };
 // ======================================
-// GET GROUP MARKS
+// GET MY STUDENTS FOR MARKS ENTRY
 // ======================================
+
+exports.getMyStudentsForMarks = async (req, res) => {
+
+    const start = Date.now();
+    try {
+
+        const volunteerId = Number(req.user.id);
+
+        const schedule = await prisma.schedule.findFirst({
+
+            where: {
+
+                volunteerId,
+
+                status: "ACTIVE"
+
+            },
+
+            select: {
+
+                group: {
+
+                    select: {
+
+                        id: true,
+
+                        students: {
+
+                            where: {
+
+                                isActive: true
+
+                            },
+
+                            select: {
+
+                                id: true,
+
+                                fullName: true
+
+                            },
+
+                            orderBy: {
+
+                                fullName: "asc"
+
+                            }
+
+                        }
+
+                    }
+
+                }
+
+            }
+
+        });
+
+        if (!schedule || !schedule.group) {
+
+            return res.status(200).json({
+
+                success: true,
+
+                students: []
+
+            });
+
+        }
+
+        return res.status(200).json({
+
+            success: true,
+
+            students: schedule.group.students
+
+        });
+
+    }
+
+    catch (error) {
+
+        console.error(
+            "Get Students For Marks Error:",
+            error
+        );
+
+        return res.status(500).json({
+
+            success: false,
+
+            message:
+                "Unable to fetch students."
+
+        });
+
+    }
+
+};
+ 
 // ======================================
 // GET MY MARKS
 // ======================================
@@ -253,40 +353,44 @@ exports.getMyMarks = async (req, res) => {
 
         const volunteerId = Number(req.user.id);
 
-        const exam = req.query.exam;
-
-        const subject = req.query.subject;
+        const { exam, subject } = req.query;
 
         const where = {
-
             volunteerId
-
         };
 
         if (exam) {
-
             where.exam = exam;
-
         }
 
         if (subject) {
-
             where.subject = subject;
-
         }
 
         const marks = await prisma.mark.findMany({
 
             where,
 
-            include: {
+            select: {
+
+                id: true,
+
+                exam: true,
+
+                subject: true,
+
+                marks: true,
+
+                maxMarks: true,
+
+                remarks: true,
+
+                createdAt: true,
 
                 student: {
 
                     select: {
 
-                        id: true,
-                        studentCode: true,
                         fullName: true
 
                     }
@@ -295,21 +399,11 @@ exports.getMyMarks = async (req, res) => {
 
             },
 
-            orderBy: [
+            orderBy: {
 
-                {
+                createdAt: "desc"
 
-                    exam: "asc"
-
-                },
-
-                {
-
-                    createdAt: "desc"
-
-                }
-
-            ]
+            }
 
         });
 
@@ -327,13 +421,17 @@ exports.getMyMarks = async (req, res) => {
 
     catch (error) {
 
-        console.error("Get My Marks Error:", error);
+        console.error(
+            "Get My Marks Error:",
+            error
+        );
 
         return res.status(500).json({
 
             success: false,
 
-            message: "Unable to fetch marks."
+            message:
+                "Unable to fetch marks."
 
         });
 

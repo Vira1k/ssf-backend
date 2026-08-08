@@ -19,7 +19,15 @@ router.post(
     marksController.saveMarks
 );
 
+// ======================================
+// GET STUDENTS FOR MARKS ENTRY
+// ======================================
 
+router.get(
+    "/my-students",
+    authMiddleware,
+    marksController.getMyStudentsForMarks
+);
 // ======================================
 // GET GROUP MARKS
 // ======================================

@@ -72,11 +72,16 @@ exports.getTodayAttendance = async (req, res) => {
 
                 },
 
-                include: {
-
-                    group: true
-
-                }
+               select: {
+    id: true,
+    groupId: true,
+    group: {
+        select: {
+            id: true,
+            name: true
+        }
+    }
+}
 
             });
 
@@ -103,25 +108,32 @@ exports.getTodayAttendance = async (req, res) => {
         // GET STUDENTS
         // ======================================
 
-        const students =
-            await prisma.student.findMany({
+const students =
+    await prisma.student.findMany({
 
-                where: {
+        where: {
 
-                    groupId:
-                        schedule.groupId,
+            groupId: schedule.groupId,
 
-                    isActive: true
+            isActive: true
 
-                },
+        },
 
-                orderBy: {
+        select: {
 
-                    fullName: "asc"
+            id: true,
 
-                }
+            fullName: true
 
-            });
+        },
+
+        orderBy: {
+
+            fullName: "asc"
+
+        }
+
+    });
 
 
         // ======================================

@@ -5,31 +5,65 @@ const prisma = require("../config/prisma");
 // ======================================
 exports.getAllStudents = async (req, res) => {
     try {
+        const page = Number(req.query.page) || 1;
+        const limit = Number(req.query.limit) || 20;
 
-        const students = await prisma.student.findMany({
+        const [totalStudents, students] = await Promise.all([
 
-            where: {
-                isActive: true
-            },
-
-            include: {
-                group: {
-                    select: {
-                        id: true,
-                        name: true
-                    }
+            prisma.student.count({
+                where: {
+                    isActive: true
                 }
-            },
+            }),
 
-            orderBy: {
-                fullName: "asc"
-            }
+            prisma.student.findMany({
+                where: {
+                    isActive: true
+                },
 
-        });
+                select: {
+                    id: true,
+                    studentCode: true,
+                    fullName: true,
+                    fatherName: true,
+                    gender: true,
+                    profilePhoto: true,
+                    isActive: true,
+
+                    group: {
+                        select: {
+                            id: true,
+                            name: true,
+                            camp: {
+                                select: {
+                                    id: true,
+                                    name: true
+                                }
+                            }
+                        }
+                    }
+                },
+
+                orderBy: {
+                    fullName: "asc"
+                },
+
+                skip: (page - 1) * limit,
+                take: limit
+            })
+
+        ]);
 
         return res.status(200).json({
             success: true,
+
             count: students.length,
+            totalStudents,
+
+            currentPage: page,
+            totalPages: Math.ceil(totalStudents / limit),
+            limit,
+
             students
         });
 

@@ -6,18 +6,32 @@ const prisma = require("../config/prisma");
 exports.getAllGroups = async (req, res) => {
     try {
 
-        const groups = await prisma.group.findMany({
-            include: {
-                camp: true,
+        const campId = Number(req.query.campId);
+      const groups = await prisma.group.findMany({
+    where: campId
+        ? {
+            campId,
+            isActive: true
+        }
+        : {
+            isActive: true
+        },            include: {
+                camp: {
+    select: {
+        id: true,
+        name: true
+    }
+},
 
-                students: {
-                    where: {
-                        isActive: true
-                    },
-                    orderBy: {
-                        fullName: "asc"
-                    }
-                },
+                _count: {
+    select: {
+        students: {
+            where: {
+                isActive: true
+            }
+        }
+    }
+},
 
                 schedules: {
                     include: {
@@ -352,4 +366,45 @@ exports.deleteGroup = async (req, res) => {
         });
 
     }
+};
+// =======================================
+// Get Groups For Dropdown
+// =======================================
+exports.getGroupsDropdown = async (req, res) => {
+
+    try {
+
+        const groups = await prisma.group.findMany({
+
+            where: {
+                isActive: true
+            },
+
+            select: {
+                id: true,
+                name: true
+            },
+
+            orderBy: {
+                name: "asc"
+            }
+
+        });
+
+        return res.status(200).json({
+            success: true,
+            data: groups
+        });
+
+    } catch (error) {
+
+        console.error("Get Groups Dropdown Error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Unable to fetch groups."
+        });
+
+    }
+
 };

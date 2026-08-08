@@ -1,6 +1,14 @@
 const PDFDocument = require("pdfkit");
 const prisma = require("../config/prisma");
+// ======================================
+// ANALYTICS CACHE
+// ======================================
 
+let analyticsCache = null;
+
+let analyticsCacheTime = 0;
+
+const ANALYTICS_CACHE_DURATION = 60 * 1000; // 60 seconds
 
 // ======================================
 // ADMIN ANALYTICS DASHBOARD
@@ -9,6 +17,20 @@ const prisma = require("../config/prisma");
 exports.getAnalytics = async (req, res) => {
 
     try {
+        // ======================================
+// CHECK ANALYTICS CACHE
+// ======================================
+
+if (
+    analyticsCache &&
+    Date.now() - analyticsCacheTime < ANALYTICS_CACHE_DURATION
+) {
+
+    return res.status(200).json(
+        analyticsCache
+    );
+
+}
 
         // ======================================
         // ONLY ADMIN
@@ -94,321 +116,319 @@ exports.getAnalytics = async (req, res) => {
             groups.map(group => group.id);
 
 
-        // ======================================
-        // TOTAL STUDENTS
-        // ======================================
-
-        const totalStudents =
-            groupIds.length > 0
-                ? await prisma.student.count({
-
-                    where: {
-
-                        isActive: true,
-
-                        groupId: {
-                            in: groupIds
-                        }
-
-                    }
-
-                })
-                : 0;
-
-
-        // ======================================
-        // ACTIVE VOLUNTEERS
-        // ======================================
-
-        let volunteerWhere = {
-
-            role: "VOLUNTEER",
-            status: "APPROVED",
-            isActive: true
-
-        };
-
-
-        // If camp/group filter exists,
-        // count volunteers assigned through schedule
-
-        if (campId || groupId) {
-
-           volunteerWhere.primarySchedules = {
-                some: {
-
-                    status: "ACTIVE",
-
-                    groupId: {
-                        in: groupIds
-                    }
-
-                }
-
-            };
-
-        }
-
-
-        const totalVolunteers =
-            await prisma.user.count({
-
-                where: volunteerWhere
-
-            });
-
-
-        // ======================================
-        // TEACHING REPORTS
-        // ======================================
-
-        const totalReports =
-            groupIds.length > 0
-                ? await prisma.teachingReport.count({
-
-                    where: {
-
-                        groupId: {
-                            in: groupIds
-                        }
-
-                    }
-
-                })
-                : 0;
-
-
-        // ======================================
-        // STUDENT ATTENDANCE
-        // ======================================
-
-        const studentPresent =
-            groupIds.length > 0
-                ? await prisma.attendance.count({
-
-                    where: {
-
-                        groupId: {
-                            in: groupIds
-                        },
-
-                        isPresent: true
-
-                    }
-
-                })
-                : 0;
-
-
-        const studentAbsent =
-            groupIds.length > 0
-                ? await prisma.attendance.count({
-
-                    where: {
-
-                        groupId: {
-                            in: groupIds
-                        },
-
-                        isPresent: false
-
-                    }
-
-                })
-                : 0;
-
-
-        const studentAttendanceTotal =
-            studentPresent +
-            studentAbsent;
-
-
-        const studentAttendancePercentage =
-            studentAttendanceTotal > 0
-                ? Math.round(
-                    (
-                        studentPresent /
-                        studentAttendanceTotal
-                    ) * 100
-                )
-                : 0;
-
-
-        // ======================================
-        // VOLUNTEER ATTENDANCE
-        // ======================================
-
-        const volunteerPresent =
-            groupIds.length > 0
-                ? await prisma.volunteerAttendance.count({
-
-                    where: {
-
-                        groupId: {
-                            in: groupIds
-                        },
-
-                        isPresent: true
-
-                    }
-
-                })
-                : 0;
-
-
-        const volunteerAbsent =
-            groupIds.length > 0
-                ? await prisma.volunteerAttendance.count({
-
-                    where: {
-
-                        groupId: {
-                            in: groupIds
-                        },
-
-                        isPresent: false
-
-                    }
-
-                })
-                : 0;
-
-
-        const volunteerAttendanceTotal =
-            volunteerPresent +
-            volunteerAbsent;
-
-
-        const volunteerAttendancePercentage =
-            volunteerAttendanceTotal > 0
-                ? Math.round(
-                    (
-                        volunteerPresent /
-                        volunteerAttendanceTotal
-                    ) * 100
-                )
-                : 0;
-
-
-        // ======================================
-        // GROUP ANALYTICS
-        // ======================================
-
-        const groupAnalytics = [];
-
-
-        for (const group of groups) {
-
-            const students =
-                await prisma.student.count({
-
-                    where: {
-
-                        groupId: group.id,
-                        isActive: true
-
-                    }
-
-                });
-
-
-            const volunteers =
-    await prisma.user.count({
-
-        where:{
-
-            role:"VOLUNTEER",
-
-            status:"APPROVED",
-
-            isActive:true,
-
-            primarySchedules:{
-                some:{
-                    groupId:1,
-
-                    status:"ACTIVE"
+// ======================================
+// ALL ANALYTICS COUNTS
+// RUN IN PARALLEL
+// ======================================
+
+const [
+    totalStudents,
+    totalVolunteers,
+    totalReports,
+    studentPresent,
+    studentAbsent,
+    volunteerPresent,
+    volunteerAbsent
+] = await Promise.all([
+
+    // TOTAL STUDENTS
+    groupIds.length > 0
+        ? prisma.student.count({
+            where: {
+                isActive: true,
+                groupId: {
+                    in: groupIds
                 }
             }
+        })
+        : Promise.resolve(0),
 
+  // ACTIVE VOLUNTEERS
+prisma.user.count({
+    where: {
+        role: "VOLUNTEER",
+        status: "APPROVED",
+        isActive: true,
+
+        ...(campId || groupId
+            ? {
+                primarySchedules: {
+                    some: {
+                        status: "ACTIVE",
+                        groupId: {
+                            in: groupIds
+                        }
+                    }
+                }
+            }
+            : {})
+    }
+}),
+    // TEACHING REPORTS
+    groupIds.length > 0
+        ? prisma.teachingReport.count({
+            where: {
+                groupId: {
+                    in: groupIds
+                }
+            }
+        })
+        : Promise.resolve(0),
+
+    // STUDENT PRESENT
+    groupIds.length > 0
+        ? prisma.attendance.count({
+            where: {
+                groupId: {
+                    in: groupIds
+                },
+                isPresent: true
+            }
+        })
+        : Promise.resolve(0),
+
+    // STUDENT ABSENT
+    groupIds.length > 0
+        ? prisma.attendance.count({
+            where: {
+                groupId: {
+                    in: groupIds
+                },
+                isPresent: false
+            }
+        })
+        : Promise.resolve(0),
+
+    // VOLUNTEER PRESENT
+    groupIds.length > 0
+        ? prisma.volunteerAttendance.count({
+            where: {
+                groupId: {
+                    in: groupIds
+                },
+                isPresent: true
+            }
+        })
+        : Promise.resolve(0),
+
+    // VOLUNTEER ABSENT
+    groupIds.length > 0
+        ? prisma.volunteerAttendance.count({
+            where: {
+                groupId: {
+                    in: groupIds
+                },
+                isPresent: false
+            }
+        })
+        : Promise.resolve(0)
+
+]);
+
+ // ======================================
+// GROUP ANALYTICS
+// ======================================
+
+ 
+ // ======================================
+// GROUP ANALYTICS
+// OPTIMIZED
+// ======================================
+
+const [
+    studentCounts,
+    volunteerCounts,
+    reportCounts,
+    presentCounts,
+    absentCounts
+] = await Promise.all([
+
+    // STUDENTS
+    prisma.student.groupBy({
+        by: ["groupId"],
+        where: {
+            isActive: true,
+            groupId: {
+                in: groupIds
+            }
+        },
+        _count: {
+            id: true
         }
+    }),
 
-    });  
-
-
-            const reports =
-                await prisma.teachingReport.count({
-
-                    where: {
-                        groupId: group.id
-                    }
-
-                });
-
-
-            const present =
-                await prisma.attendance.count({
-
-                    where: {
-
-                        groupId: group.id,
-                        isPresent: true
-
-                    }
-
-                });
-
-
-            const absent =
-                await prisma.attendance.count({
-
-                    where: {
-
-                        groupId: group.id,
-                        isPresent: false
-
-                    }
-
-                });
-
-
-            const attendanceTotal =
-                present + absent;
-
-
-            const attendancePercentage =
-                attendanceTotal > 0
-                    ? Math.round(
-                        (
-                            present /
-                            attendanceTotal
-                        ) * 100
-                    )
-                    : 0;
-
-
-            groupAnalytics.push({
-
-                groupId: group.id,
-
-                groupName: group.name,
-
-                campId: group.camp.id,
-
-                campName: group.camp.name,
-
-                students,
-
-                volunteers,
-
-                reports,
-
-                attendancePercentage
-
-            });
-
+    // VOLUNTEERS
+    prisma.schedule.groupBy({
+        by: ["groupId"],
+        where: {
+            status: "ACTIVE",
+            groupId: {
+                in: groupIds
+            },
+            volunteer: {
+                role: "VOLUNTEER",
+                status: "APPROVED",
+                isActive: true
+            }
+        },
+        _count: {
+            volunteerId: true
         }
+    }),
 
+    // REPORTS
+    prisma.teachingReport.groupBy({
+        by: ["groupId"],
+        where: {
+            groupId: {
+                in: groupIds
+            }
+        },
+        _count: {
+            id: true
+        }
+    }),
+
+    // PRESENT
+    prisma.attendance.groupBy({
+        by: ["groupId"],
+        where: {
+            groupId: {
+                in: groupIds
+            },
+            isPresent: true
+        },
+        _count: {
+            id: true
+        }
+    }),
+
+    // ABSENT
+    prisma.attendance.groupBy({
+        by: ["groupId"],
+        where: {
+            groupId: {
+                in: groupIds
+            },
+            isPresent: false
+        },
+        _count: {
+            id: true
+        }
+    })
+
+]);
+
+
+// ======================================
+// CREATE LOOKUP MAPS
+// ======================================
+
+const studentMap = new Map(
+    studentCounts.map(item => [
+        item.groupId,
+        item._count.id
+    ])
+);
+
+const volunteerMap = new Map(
+    volunteerCounts.map(item => [
+        item.groupId,
+        item._count.volunteerId
+    ])
+);
+
+const reportMap = new Map(
+    reportCounts.map(item => [
+        item.groupId,
+        item._count.id
+    ])
+);
+
+const presentMap = new Map(
+    presentCounts.map(item => [
+        item.groupId,
+        item._count.id
+    ])
+);
+
+const absentMap = new Map(
+    absentCounts.map(item => [
+        item.groupId,
+        item._count.id
+    ])
+);
+
+
+// ======================================
+// BUILD GROUP ANALYTICS
+// ======================================
+
+const groupAnalytics = groups.map(group => {
+
+    const students =
+        studentMap.get(group.id) || 0;
+
+    const volunteers =
+        volunteerMap.get(group.id) || 0;
+
+    const reports =
+        reportMap.get(group.id) || 0;
+
+    const present =
+        presentMap.get(group.id) || 0;
+
+    const absent =
+        absentMap.get(group.id) || 0;
+
+    const attendanceTotal =
+        present + absent;
+
+    const attendancePercentage =
+        attendanceTotal > 0
+            ? Math.round(
+                (present / attendanceTotal) * 100
+            )
+            : 0;
+
+    return {
+        groupId: group.id,
+        groupName: group.name,
+        campId: group.camp.id,
+        campName: group.camp.name,
+        students,
+        volunteers,
+        reports,
+        attendancePercentage
+    };
+
+});
+// ======================================
+// ATTENDANCE PERCENTAGES
+// ======================================
+
+const studentAttendanceTotal =
+    studentPresent + studentAbsent;
+
+const studentAttendancePercentage =
+    studentAttendanceTotal > 0
+        ? Math.round(
+            (studentPresent /
+                studentAttendanceTotal) * 100
+        )
+        : 0;
+
+
+const volunteerAttendanceTotal =
+    volunteerPresent + volunteerAbsent;
+
+const volunteerAttendancePercentage =
+    volunteerAttendanceTotal > 0
+        ? Math.round(
+            (volunteerPresent /
+                volunteerAttendanceTotal) * 100
+        )
+        : 0;
 
         // ======================================
         // RECENT TEACHING ACTIVITY
@@ -469,58 +489,79 @@ exports.getAnalytics = async (req, res) => {
                 : [];
 
 
-        // ======================================
-        // RESPONSE
-        // ======================================
+      // ======================================
+// RESPONSE DATA
+// ======================================
 
-        return res.status(200).json({
+const responseData = {
 
-            success: true,
+    success: true,
 
-            stats: {
+    stats: {
 
-                totalStudents,
+        totalStudents,
 
-                totalVolunteers,
+        totalVolunteers,
 
-                totalGroups:
-                    groups.length,
+        totalGroups:
+            groups.length,
 
-                totalReports
+        totalReports
 
-            },
+    },
 
-            studentAttendance: {
+    studentAttendance: {
 
-                present:
-                    studentPresent,
+        present:
+            studentPresent,
 
-                absent:
-                    studentAbsent,
+        absent:
+            studentAbsent,
 
-                percentage:
-                    studentAttendancePercentage
+        percentage:
+            studentAttendancePercentage
 
-            },
+    },
 
-            volunteerAttendance: {
+    volunteerAttendance: {
 
-                present:
-                    volunteerPresent,
+        present:
+            volunteerPresent,
 
-                absent:
-                    volunteerAbsent,
+        absent:
+            volunteerAbsent,
 
-                percentage:
-                    volunteerAttendancePercentage
+        percentage:
+            volunteerAttendancePercentage
 
-            },
+    },
 
-            groupAnalytics,
+    groupAnalytics,
 
-            recentActivity
+    recentActivity
 
-        });
+};
+
+
+// ======================================
+// SAVE ANALYTICS CACHE
+// ======================================
+
+analyticsCache =
+    responseData;
+
+analyticsCacheTime =
+    Date.now();
+
+
+// ======================================
+// SEND RESPONSE
+// ======================================
+
+return res.status(200).json(
+    responseData
+);
+        
 
     }
 

@@ -1,9 +1,10 @@
 // =======================================
-// Volunteer Dashboard Controller
+// SSF VOLUNTEER CONTROLLER
+// OPTIMIZED VERSION
 // =======================================
 
 const prisma = require("../config/prisma");
- 
+
 
 // =======================================
 // MY STUDENTS CACHE
@@ -13,6 +14,7 @@ const myStudentsCache = new Map();
 
 const MY_STUDENTS_CACHE_TIME = 60000; // 60 seconds
 
+
 // =======================================
 // DASHBOARD CACHE
 // =======================================
@@ -20,57 +22,102 @@ const MY_STUDENTS_CACHE_TIME = 60000; // 60 seconds
 const dashboardCache = new Map();
 
 const DASHBOARD_CACHE_TIME = 60000; // 60 seconds
+
+
+
 // =======================================
-// Get Volunteer Dashboard
+// GET VOLUNTEER DASHBOARD
 // =======================================
+
+// =======================================
+// GET VOLUNTEER DASHBOARD
+// FAST + OPTIMIZED
+// =======================================
+
+// =======================================
+// GET VOLUNTEER DASHBOARD
+// FAST + OPTIMIZED
+// =======================================
+
 exports.getDashboard = async (req, res) => {
+
+    const startTime = Date.now();
 
     try {
 
-        const totalStart = Date.now();
+        // =======================================
+        // VOLUNTEER ID
+        // =======================================
 
         const volunteerId = Number(req.user.id);
 
+        if (!Number.isInteger(volunteerId)) {
+
+            return res.status(400).json({
+                success: false,
+                message: "Invalid volunteer ID."
+            });
+
+        }
+
         // =======================================
-// CHECK DASHBOARD CACHE
-// =======================================
+        // SERVER CACHE
+        // =======================================
 
-const cached = dashboardCache.get(volunteerId);
+        const cached = dashboardCache.get(volunteerId);
 
-if (
-    cached &&
-    Date.now() - cached.time < DASHBOARD_CACHE_TIME
-) {
-    return res.status(200).json(cached.data);
-}
+        if (
+            cached &&
+            Date.now() - cached.time < DASHBOARD_CACHE_TIME
+        ) {
 
-        const today = new Date();
+            console.log("⚡ Dashboard served from cache");
 
-        today.setHours(0, 0, 0, 0);
+            return res.status(200).json(cached.data);
 
-        // ===================================
-        // Today's Schedule
-        // ===================================
+        }
 
-        const scheduleStart = Date.now();
+        // =======================================
+        // CURRENT TIME
+        // =======================================
+
+        const now = new Date();
+
+        // =======================================
+        // SINGLE DATABASE QUERY
+        // =======================================
+        // Schedule + Group + Previous Report
+        // are fetched together.
+        //
+        // Previously:
+        // 1. Schedule query
+        // 2. Previous report query
+        //
+        // Now:
+        // 1. Single DB round-trip
+        // =======================================
 
         const schedule = await prisma.schedule.findFirst({
 
             where: {
-
                 volunteerId,
                 status: "ACTIVE"
+            },
 
+            orderBy: {
+                id: "asc"
             },
 
             select: {
 
                 id: true,
-                volunteerId: true,
+
                 groupId: true,
 
                 subject: true,
+
                 teachingDay: true,
+
                 teachingTime: true,
 
                 group: {
@@ -78,14 +125,40 @@ if (
                     select: {
 
                         id: true,
+
                         name: true,
 
-                        camp: {
+                        reports: {
+
+                            where: {
+                                reportDate: {
+                                    lt: now
+                                }
+                            },
+
+                            orderBy: {
+                                reportDate: "desc"
+                            },
+
+                            take: 1,
 
                             select: {
 
-                                id: true,
-                                name: true
+                                reportDate: true,
+
+                                subject: true,
+
+                                whatTaught: true,
+
+                                homework: true,
+
+                                volunteer: {
+
+                                    select: {
+                                        fullName: true
+                                    }
+
+                                }
 
                             }
 
@@ -99,247 +172,146 @@ if (
 
         });
 
-        console.log(
-            "Schedule:",
-            Date.now() - scheduleStart,
-            "ms"
-        );
+        // =======================================
+        // NO ACTIVE SCHEDULE
+        // =======================================
 
         if (!schedule) {
 
-            console.log(
-                "TOTAL DASHBOARD:",
-                Date.now() - totalStart,
-                "ms"
+            const data = {
+                success: true,
+                todayClass: null,
+                previousClass: null
+            };
+
+            dashboardCache.set(
+                volunteerId,
+                {
+                    time: Date.now(),
+                    data
+                }
             );
 
-            return res.status(200).json({
+            console.log(
+                `⚡ Dashboard DB: ${Date.now() - startTime}ms`
+            );
 
-                success: true,
-
-                todayClass: null,
-
-                previousClass: null
-
-            });
+            return res.status(200).json(data);
 
         }
-        // ===================================
-        // Previous Class
-        // ===================================
 
-        const previousClassStart = Date.now();
+        // =======================================
+        // GET PREVIOUS REPORT
+        // =======================================
 
-        const previousClass = await prisma.teachingReport.findFirst({
+        const previousReport =
+            schedule.group?.reports?.[0] || null;
 
-            where: {
+        // =======================================
+        // FORMAT TODAY CLASS
+        // =======================================
 
-                groupId: schedule.groupId,
+        const todayClass = {
 
-                reportDate: {
+            id: schedule.id,
 
-                    lt: today
+            groupId: schedule.groupId,
 
+            subject: schedule.subject,
+
+            teachingDay: schedule.teachingDay,
+
+            teachingTime: schedule.teachingTime,
+
+            group: schedule.group
+
+                ? {
+                    id: schedule.group.id,
+                    name: schedule.group.name
                 }
 
-            },
+                : null
 
-            orderBy: {
+        };
 
-                reportDate: "desc"
+        // =======================================
+        // FORMAT PREVIOUS CLASS
+        // =======================================
 
-            },
+        const previousClass = previousReport
 
-            select: {
+            ? {
 
-                id: true,
+                reportDate:
+                    previousReport.reportDate,
 
-                reportDate: true,
+                subject:
+                    previousReport.subject,
 
-                subject: true,
+                whatTaught:
+                    previousReport.whatTaught,
 
-                whatTaught: true,
+                homework:
+                    previousReport.homework,
 
-                homework: true,
-
-                nextClassPlan: true,
-
-                photo: true,
-
-                groupId: true,
-
-                volunteer: {
-
-                    select: {
-
-                        id: true,
-
-                        fullName: true
-
-                    }
-
-                },
-
-                group: {
-
-                    select: {
-
-                        id: true,
-
-                        name: true,
-
-                        camp: {
-
-                            select: {
-
-                                id: true,
-
-                                name: true
-
-                            }
-
-                        }
-
-                    }
-
-                }
+                volunteer:
+                    previousReport.volunteer
 
             }
 
-        });
+            : null;
+
+        // =======================================
+        // FINAL RESPONSE
+        // =======================================
+
+        const dashboardData = {
+
+            success: true,
+
+            todayClass,
+
+            previousClass
+
+        };
+
+        // =======================================
+        // SAVE CACHE
+        // =======================================
+
+        dashboardCache.set(
+            volunteerId,
+            {
+                time: Date.now(),
+                data: dashboardData
+            }
+        );
+
+        // =======================================
+        // PERFORMANCE LOG
+        // =======================================
+
+        const totalTime =
+            Date.now() - startTime;
 
         console.log(
-            "Previous Class:",
-            Date.now() - previousClassStart,
-            "ms"
+            `⚡ Dashboard DB: ${totalTime}ms`
         );
 
-        let previousClassData = null;
+        // =======================================
+        // RESPONSE
+        // =======================================
 
-        if (previousClass) {
-
-            const startDate = new Date(previousClass.reportDate);
-
-            startDate.setHours(0, 0, 0, 0);
-
-            const endDate = new Date(startDate);
-
-            endDate.setDate(endDate.getDate() + 1);
-
-            const attendanceStart = Date.now();
-
-            const attendance = await prisma.attendance.findMany({
-
-                where: {
-
-                    groupId: previousClass.groupId,
-
-                    attendanceDate: {
-
-                        gte: startDate,
-
-                        lt: endDate
-
-                    }
-
-                },
-
-                select: {
-
-                    isPresent: true,
-
-                    student: {
-
-                        select: {
-
-                            fullName: true
-
-                        }
-
-                    }
-
-                }
-
-            });
-
-            console.log(
-                "Attendance:",
-                Date.now() - attendanceStart,
-                "ms"
-            );
-
-           let presentCount = 0;
-
-const absentStudents = [];
-
-for (const item of attendance) {
-
-    if (item.isPresent) {
-
-        presentCount++;
-
-    } else {
-
-        absentStudents.push(
-            item.student.fullName
+        return res.status(200).json(
+            dashboardData
         );
-
-    }
-
-}
-
-            previousClassData = {
-
-                ...previousClass,
-
-                presentCount,
-
-                absentCount: absentStudents.length,
-
-                absentStudents
-
-            };
-
-        }
-
-        console.log(
-            "TOTAL DASHBOARD:",
-            Date.now() - totalStart,
-            "ms"
-        );
-
-       const dashboardData = {
-
-    success: true,
-
-    todayClass: schedule,
-
-    previousClass: previousClassData
-
-};
-
-dashboardCache.set(
-
-    volunteerId,
-
-    {
-
-        time: Date.now(),
-
-        data: dashboardData
-
-    }
-
-);
-
-return res.status(200).json(dashboardData);
 
     }
 
     catch (error) {
 
         console.error(
-            "Dashboard Error:",
+            "❌ Dashboard Error:",
             error
         );
 
@@ -347,15 +319,16 @@ return res.status(200).json(dashboardData);
 
             success: false,
 
-            message: "Server Error"
+            message:
+                "Unable to load dashboard."
 
         });
 
     }
 
-}; 
+};
 // =======================================
-// Get Today's Class
+// GET TODAY'S CLASS
 // Lightweight endpoint for Add Report
 // =======================================
 
@@ -363,42 +336,63 @@ exports.getTodayClass = async (req, res) => {
 
     try {
 
-        const volunteerId = Number(req.user.id);
+        const volunteerId =
+            Number(req.user.id);
 
-        const schedule = await prisma.schedule.findFirst({
 
-            where: {
-                volunteerId,
-                status: "ACTIVE"
-            },
+        if (!Number.isInteger(volunteerId)) {
 
-            select: {
+            return res.status(400).json({
 
-                id: true,
+                success: false,
 
-                groupId: true,
+                message:
+                    "Invalid volunteer ID."
 
-                subject: true,
+            });
 
-                teachingDay: true,
+        }
 
-                teachingTime: true,
 
-                group: {
+        const schedule =
+            await prisma.schedule.findFirst({
 
-                    select: {
+                where: {
 
-                        id: true,
+                    volunteerId,
 
-                        name: true
+                    status: "ACTIVE"
+
+                },
+
+                select: {
+
+                    id: true,
+
+                    groupId: true,
+
+                    subject: true,
+
+                    teachingDay: true,
+
+                    teachingTime: true,
+
+                    group: {
+
+                        select: {
+
+                            id: true,
+
+                            name: true
+
+                        }
 
                     }
 
                 }
 
-            }
+            });
 
-        });
 
         if (!schedule) {
 
@@ -412,15 +406,18 @@ exports.getTodayClass = async (req, res) => {
 
         }
 
+
         return res.status(200).json({
 
             success: true,
 
-            todayClass: schedule
+            todayClass:
+                schedule
 
         });
 
     }
+
 
     catch (error) {
 
@@ -429,11 +426,13 @@ exports.getTodayClass = async (req, res) => {
             error
         );
 
+
         return res.status(500).json({
 
             success: false,
 
-            message: "Unable to load today's class."
+            message:
+                "Unable to load today's class."
 
         });
 
@@ -441,63 +440,70 @@ exports.getTodayClass = async (req, res) => {
 
 };
 
+
+
 // =======================================
-// Get All Volunteers
+// GET ALL VOLUNTEERS
 // =======================================
 
 exports.getAllVolunteers = async (req, res) => {
 
     try {
 
-        const volunteers = await prisma.user.findMany({
+        const volunteers =
+            await prisma.user.findMany({
 
-            where: {
+                where: {
 
-                role: "VOLUNTEER",
+                    role: "VOLUNTEER",
 
-                status: "APPROVED",
+                    status: "APPROVED",
 
-                isActive: true
+                    isActive: true
 
-            },
+                },
 
-            select: {
+                select: {
 
-                id: true,
+                    id: true,
 
-                fullName: true,
+                    fullName: true,
 
-                mobile: true,
+                    mobile: true,
 
-                email: true,
+                    email: true,
 
-                college: true,
+                    college: true,
 
-                gender: true,
+                    gender: true,
 
-                createdAt: true
+                    createdAt: true
 
-            },
+                },
 
-            orderBy: {
+                orderBy: {
 
-                fullName: "asc"
+                    fullName: "asc"
 
-            }
+                }
 
-        });
+            });
+
 
         return res.status(200).json({
 
             success: true,
 
-            count: volunteers.length,
+            count:
+                volunteers.length,
 
-            data: volunteers
+            data:
+                volunteers
 
         });
 
     }
+
 
     catch (error) {
 
@@ -506,11 +512,13 @@ exports.getAllVolunteers = async (req, res) => {
             error
         );
 
+
         return res.status(500).json({
 
             success: false,
 
-            message: "Unable to fetch volunteers"
+            message:
+                "Unable to fetch volunteers"
 
         });
 
@@ -521,27 +529,51 @@ exports.getAllVolunteers = async (req, res) => {
 
 
 // =======================================
-// Get My Students - Fast + Cached
+// GET MY STUDENTS
+// FAST + CACHED
 // =======================================
 
 exports.getMyStudents = async (req, res) => {
 
     try {
 
-        const volunteerId = Number(req.user.id);
+        const volunteerId =
+            Number(req.user.id);
+
+
+        if (!Number.isInteger(volunteerId)) {
+
+            return res.status(400).json({
+
+                success: false,
+
+                message:
+                    "Invalid volunteer ID."
+
+            });
+
+        }
+
 
         // =======================================
         // CHECK CACHE
         // =======================================
 
-        const cached = myStudentsCache.get(volunteerId);
+        const cached =
+            myStudentsCache.get(
+                volunteerId
+            );
+
 
         if (
             cached &&
-            Date.now() - cached.time < MY_STUDENTS_CACHE_TIME
+            Date.now() - cached.time <
+                MY_STUDENTS_CACHE_TIME
         ) {
 
-            return res.status(200).json(cached.data);
+            return res.status(200).json(
+                cached.data
+            );
 
         }
 
@@ -550,35 +582,38 @@ exports.getMyStudents = async (req, res) => {
         // GET ASSIGNED GROUPS
         // =======================================
 
-        const schedules = await prisma.schedule.findMany({
+        const schedules =
+            await prisma.schedule.findMany({
 
-            where: {
+                where: {
 
-                volunteerId,
+                    volunteerId,
 
-                status: "ACTIVE"
+                    status: "ACTIVE"
 
-            },
+                },
 
-            select: {
+                select: {
 
-                groupId: true,
+                    groupId: true,
 
-                group: {
+                    group: {
 
-                    select: {
+                        select: {
 
-                        id: true,
+                            id: true,
 
-                        name: true,
+                            name: true,
 
-                        camp: {
+                            camp: {
 
-                            select: {
+                                select: {
 
-                                id: true,
+                                    id: true,
 
-                                name: true
+                                    name: true
+
+                                }
 
                             }
 
@@ -588,16 +623,16 @@ exports.getMyStudents = async (req, res) => {
 
                 }
 
-            }
-
-        });
+            });
 
 
         // =======================================
         // NO GROUP
         // =======================================
 
-        if (schedules.length === 0) {
+        if (
+            schedules.length === 0
+        ) {
 
             const data = {
 
@@ -613,18 +648,25 @@ exports.getMyStudents = async (req, res) => {
 
             };
 
+
             myStudentsCache.set(
 
                 volunteerId,
 
                 {
+
                     time: Date.now(),
+
                     data
+
                 }
 
             );
 
-            return res.status(200).json(data);
+
+            return res.status(200).json(
+                data
+            );
 
         }
 
@@ -638,7 +680,8 @@ exports.getMyStudents = async (req, res) => {
             ...new Set(
 
                 schedules.map(
-                    schedule => schedule.groupId
+                    schedule =>
+                        schedule.groupId
                 )
 
             )
@@ -650,45 +693,50 @@ exports.getMyStudents = async (req, res) => {
         // GET STUDENTS
         // =======================================
 
-        const students = await prisma.student.findMany({
+        const students =
+            await prisma.student.findMany({
 
-            where: {
+                where: {
 
-                groupId: {
-                    in: groupIds
+                    groupId: {
+
+                        in: groupIds
+
+                    },
+
+                    isActive: true
+
                 },
 
-                isActive: true
+                select: {
 
-            },
+                    id: true,
 
-            select: {
+                    fullName: true,
 
-                id: true,
+                    dob: true,
 
-                fullName: true,
+                    gender: true,
 
-                dob: true,
+                    phone: true,
 
-                gender: true,
+                    group: {
 
-                phone: true,
+                        select: {
 
-                group: {
+                            id: true,
 
-                    select: {
+                            name: true,
 
-                        id: true,
+                            camp: {
 
-                        name: true,
+                                select: {
 
-                        camp: {
+                                    id: true,
 
-                            select: {
+                                    name: true
 
-                                id: true,
-
-                                name: true
+                                }
 
                             }
 
@@ -696,17 +744,15 @@ exports.getMyStudents = async (req, res) => {
 
                     }
 
+                },
+
+                orderBy: {
+
+                    fullName: "asc"
+
                 }
 
-            },
-
-            orderBy: {
-
-                fullName: "asc"
-
-            }
-
-        });
+            });
 
 
         // =======================================
@@ -715,16 +761,29 @@ exports.getMyStudents = async (req, res) => {
 
         const groups = [];
 
-        for (const schedule of schedules) {
+        const groupMap = new Map();
+
+
+        for (
+            const schedule of schedules
+        ) {
+
+            const group =
+                schedule.group;
+
 
             if (
-                !groups.some(
-                    group =>
-                        group.id === schedule.group.id
-                )
+                !groupMap.has(group.id)
             ) {
 
-                groups.push(schedule.group);
+                groupMap.set(
+                    group.id,
+                    group
+                );
+
+                groups.push(
+                    group
+                );
 
             }
 
@@ -743,9 +802,11 @@ exports.getMyStudents = async (req, res) => {
 
             students,
 
-            totalStudents: students.length,
+            totalStudents:
+                students.length,
 
-            totalGroups: groups.length
+            totalGroups:
+                groups.length
 
         };
 
@@ -759,8 +820,11 @@ exports.getMyStudents = async (req, res) => {
             volunteerId,
 
             {
+
                 time: Date.now(),
+
                 data
+
             }
 
         );
@@ -770,9 +834,12 @@ exports.getMyStudents = async (req, res) => {
         // SEND RESPONSE
         // =======================================
 
-        return res.status(200).json(data);
+        return res.status(200).json(
+            data
+        );
 
     }
+
 
     catch (error) {
 
@@ -781,11 +848,13 @@ exports.getMyStudents = async (req, res) => {
             error
         );
 
+
         return res.status(500).json({
 
             success: false,
 
-            message: "Unable to fetch students"
+            message:
+                "Unable to fetch students"
 
         });
 

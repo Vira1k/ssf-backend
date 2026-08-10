@@ -10,7 +10,7 @@ const authMiddleware =
 
 
 // ======================================
-// Get All Approved Volunteers
+// GET ALL APPROVED VOLUNTEERS
 // ======================================
 
 router.get(
@@ -20,7 +20,7 @@ router.get(
 
 
 // ======================================
-// Volunteer Dashboard
+// VOLUNTEER DASHBOARD
 // ======================================
 
 router.get(
@@ -28,9 +28,10 @@ router.get(
     authMiddleware,
     volunteerController.getDashboard
 );
+
+
 // ======================================
-// Volunteer - Today's Class
-// Lightweight endpoint for Add Report
+// TODAY'S CLASS
 // ======================================
 
 router.get(
@@ -39,8 +40,9 @@ router.get(
     volunteerController.getTodayClass
 );
 
+
 // ======================================
-// Volunteer - My Students
+// MY STUDENTS
 // ======================================
 
 router.get(
@@ -49,9 +51,5 @@ router.get(
     volunteerController.getMyStudents
 );
 
-
-// ======================================
-// Export Router
-// ======================================
 
 module.exports = router;

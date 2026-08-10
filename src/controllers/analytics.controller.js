@@ -1,434 +1,1085 @@
 const PDFDocument = require("pdfkit");
 const prisma = require("../config/prisma");
+
+
 // ======================================
 // ANALYTICS CACHE
 // ======================================
 
-let analyticsCache = null;
+const analyticsCache = new Map();
 
-let analyticsCacheTime = 0;
+const ANALYTICS_CACHE_DURATION =
+    60 * 1000; // 60 seconds
 
-const ANALYTICS_CACHE_DURATION = 60 * 1000; // 60 seconds
 
 // ======================================
-// ADMIN ANALYTICS DASHBOARD
+// CLEAR CACHE
 // ======================================
 
-exports.getAnalytics = async (req, res) => {
+function clearAnalyticsCache() {
 
-    try {
-        // ======================================
-// CHECK ANALYTICS CACHE
-// ======================================
-
-if (
-    analyticsCache &&
-    Date.now() - analyticsCacheTime < ANALYTICS_CACHE_DURATION
-) {
-
-    return res.status(200).json(
-        analyticsCache
-    );
+    analyticsCache.clear();
 
 }
 
-        // ======================================
-        // ONLY ADMIN
-        // ======================================
 
-        if (req.user.role !== "ADMIN") {
+// ======================================
+// CACHE KEY
+// ======================================
+
+function getCacheKey(req) {
+
+    const role =
+        req.user?.role || "UNKNOWN";
+
+    const userId =
+        req.user?.id || "UNKNOWN";
+
+    const campId =
+        req.query.campId || "ALL";
+
+    const groupId =
+        req.query.groupId || "ALL";
+
+    return `${role}-${userId}-${campId}-${groupId}`;
+
+}
+
+
+// ======================================
+// GET VOLUNTEER ASSIGNED GROUPS
+// ======================================
+
+async function getVolunteerGroupIds(
+    volunteerId
+) {
+
+    const volunteer =
+        await prisma.user.findUnique({
+
+            where: {
+                id: volunteerId
+            },
+
+            select: {
+
+                id: true,
+
+                groupId: true,
+
+                role: true,
+
+                status: true,
+
+                isActive: true,
+
+                primarySchedules: {
+
+                    where: {
+                        status: "ACTIVE"
+                    },
+
+                    select: {
+                        groupId: true
+                    }
+
+                },
+
+                replacementSchedules: {
+
+                    where: {
+                        status: "ACTIVE"
+                    },
+
+                    select: {
+                        groupId: true
+                    }
+
+                }
+
+            }
+
+        });
+
+
+    if (!volunteer) {
+
+        return {
+            volunteer: null,
+            groupIds: []
+        };
+
+    }
+
+
+    const groupIds =
+        new Set();
+
+
+    // ==================================
+    // DIRECT GROUP
+    // ==================================
+
+    if (volunteer.groupId) {
+
+        groupIds.add(
+            volunteer.groupId
+        );
+
+    }
+
+
+    // ==================================
+    // PRIMARY SCHEDULE GROUPS
+    // ==================================
+
+    for (
+        const schedule
+        of volunteer.primarySchedules
+    ) {
+
+        if (schedule.groupId) {
+
+            groupIds.add(
+                schedule.groupId
+            );
+
+        }
+
+    }
+
+
+    // ==================================
+    // REPLACEMENT GROUPS
+    // ==================================
+
+    for (
+        const schedule
+        of volunteer.replacementSchedules
+    ) {
+
+        if (schedule.groupId) {
+
+            groupIds.add(
+                schedule.groupId
+            );
+
+        }
+
+    }
+
+
+    return {
+
+        volunteer,
+
+        groupIds:
+            Array.from(groupIds)
+
+    };
+
+}
+
+
+// ======================================
+// GET ANALYTICS
+//
+// ADMIN
+// → ALL GROUPS
+//
+// VOLUNTEER
+// → ASSIGNED GROUPS ONLY
+// ======================================
+
+exports.getAnalytics = async (
+    req,
+    res
+) => {
+
+    try {
+
+        const role =
+            req.user.role;
+
+        const userId =
+            Number(req.user.id);
+
+
+        // ==================================
+        // CACHE
+        // ==================================
+
+        const cacheKey =
+            getCacheKey(req);
+
+        const cached =
+            analyticsCache.get(
+                cacheKey
+            );
+
+
+        if (
+            cached &&
+            (
+                Date.now() -
+                cached.time
+            ) < ANALYTICS_CACHE_DURATION
+        ) {
+
+            return res.status(200).json(
+                cached.data
+            );
+
+        }
+
+
+        // ==================================
+        // GROUP FILTERS
+        // ==================================
+
+        const requestedCampId =
+            req.query.campId
+                ? Number(req.query.campId)
+                : null;
+
+        const requestedGroupId =
+            req.query.groupId
+                ? Number(req.query.groupId)
+                : null;
+
+
+        // ==================================
+        // BASE GROUP WHERE
+        // ==================================
+
+        let groupWhere = {
+
+            isActive: true
+
+        };
+
+
+        // ==================================
+        // VOLUNTEER SECURITY
+        // ==================================
+
+        if (
+            role === "VOLUNTEER"
+        ) {
+
+            const {
+                volunteer,
+                groupIds
+            } =
+                await getVolunteerGroupIds(
+                    userId
+                );
+
+
+            if (!volunteer) {
+
+                return res.status(404).json({
+
+                    success: false,
+
+                    message:
+                        "Volunteer account not found."
+
+                });
+
+            }
+
+
+            if (
+                volunteer.status !== "APPROVED" ||
+                !volunteer.isActive
+            ) {
+
+                return res.status(403).json({
+
+                    success: false,
+
+                    message:
+                        "Volunteer account is not active."
+
+                });
+
+            }
+
+
+            if (
+                groupIds.length === 0
+            ) {
+
+                return res.status(200).json({
+
+                    success: true,
+
+                    stats: {
+
+                        totalStudents: 0,
+
+                        totalVolunteers: 0,
+
+                        totalGroups: 0,
+
+                        totalReports: 0
+
+                    },
+
+                    studentAttendance: {
+
+                        present: 0,
+
+                        absent: 0,
+
+                        percentage: 0
+
+                    },
+
+                    volunteerAttendance: {
+
+                        present: 0,
+
+                        absent: 0,
+
+                        percentage: 0
+
+                    },
+
+                    groupAnalytics: [],
+
+                    recentActivity: []
+
+                });
+
+            }
+
+
+            // ==================================
+            // ONLY ASSIGNED GROUPS
+            // ==================================
+
+            groupWhere.id = {
+
+                in: groupIds
+
+            };
+
+
+            // ==================================
+            // OPTIONAL GROUP FILTER
+            // ==================================
+
+            if (
+                requestedGroupId
+            ) {
+
+                if (
+                    !groupIds.includes(
+                        requestedGroupId
+                    )
+                ) {
+
+                    return res.status(403).json({
+
+                        success: false,
+
+                        message:
+                            "You can only view analytics for your assigned group."
+
+                    });
+
+                }
+
+
+                groupWhere.id = {
+
+                    equals:
+                        requestedGroupId
+
+                };
+
+            }
+
+
+            // ==================================
+            // CAMP FILTER
+            // ==================================
+
+            if (
+                requestedCampId
+            ) {
+
+                groupWhere.campId =
+                    requestedCampId;
+
+            }
+
+        }
+
+
+        // ==================================
+        // ADMIN FILTERS
+        // ==================================
+
+        else if (
+            role === "ADMIN"
+        ) {
+
+            if (
+                requestedCampId
+            ) {
+
+                groupWhere.campId =
+                    requestedCampId;
+
+            }
+
+
+            if (
+                requestedGroupId
+            ) {
+
+                groupWhere.id =
+                    requestedGroupId;
+
+            }
+
+        }
+
+
+        // ==================================
+        // OTHER ROLES
+        // ==================================
+
+        else {
 
             return res.status(403).json({
 
                 success: false,
-                message: "Access Denied. Admin only."
+
+                message:
+                    "Access Denied."
 
             });
 
         }
 
 
-        // ======================================
-        // FILTERS
-        // ======================================
+        // ==================================
+        // GET GROUPS
+        // ==================================
 
-        const campId = req.query.campId
-            ? Number(req.query.campId)
-            : null;
+        const groups =
+            await prisma.group.findMany({
 
-        const groupId = req.query.groupId
-            ? Number(req.query.groupId)
-            : null;
+                where: groupWhere,
 
+                select: {
 
-        // ======================================
-        // GROUP FILTER
-        // ======================================
+                    id: true,
 
-        const groupWhere = {
+                    name: true,
 
-            isActive: true,
+                    campId: true,
 
-            ...(campId && {
-                campId
-            }),
+                    camp: {
 
-            ...(groupId && {
-                id: groupId
-            })
+                        select: {
 
-        };
+                            id: true,
 
+                            name: true
 
-        // ======================================
-        // GET FILTERED GROUPS
-        // ======================================
+                        }
 
-        const groups = await prisma.group.findMany({
-
-            where: groupWhere,
-
-            select: {
-
-                id: true,
-                name: true,
-                campId: true,
-
-                camp: {
-
-                    select: {
-                        id: true,
-                        name: true
                     }
+
+                },
+
+                orderBy: {
+
+                    name: "asc"
 
                 }
 
-            },
-
-            orderBy: {
-                name: "asc"
-            }
-
-        });
+            });
 
 
         const groupIds =
-            groups.map(group => group.id);
+            groups.map(
+                group => group.id
+            );
 
 
-// ======================================
-// ALL ANALYTICS COUNTS
-// RUN IN PARALLEL
-// ======================================
+        // ======================================
+        // ALL MAIN COUNTS IN PARALLEL
+        // ======================================
 
-const [
-    totalStudents,
-    totalVolunteers,
-    totalReports,
-    studentPresent,
-    studentAbsent,
-    volunteerPresent,
-    volunteerAbsent
-] = await Promise.all([
+        const [
 
-    // TOTAL STUDENTS
-    groupIds.length > 0
-        ? prisma.student.count({
-            where: {
-                isActive: true,
-                groupId: {
-                    in: groupIds
-                }
-            }
-        })
-        : Promise.resolve(0),
+            totalStudents,
 
-  // ACTIVE VOLUNTEERS
-prisma.user.count({
-    where: {
-        role: "VOLUNTEER",
-        status: "APPROVED",
-        isActive: true,
+            totalVolunteers,
 
-        ...(campId || groupId
-            ? {
-                primarySchedules: {
-                    some: {
-                        status: "ACTIVE",
+            totalReports,
+
+            studentPresent,
+
+            studentAbsent,
+
+            volunteerPresent,
+
+            volunteerAbsent
+
+        ] = await Promise.all([
+
+
+            // ==================================
+            // STUDENTS
+            // ==================================
+
+            groupIds.length > 0
+
+                ? prisma.student.count({
+
+                    where: {
+
+                        isActive: true,
+
                         groupId: {
                             in: groupIds
                         }
+
                     }
+
+                })
+
+                : Promise.resolve(0),
+
+
+            // ==================================
+            // VOLUNTEERS
+            // ==================================
+
+            groupIds.length > 0
+
+                ? prisma.user.count({
+
+                    where: {
+
+                        role: "VOLUNTEER",
+
+                        status: "APPROVED",
+
+                        isActive: true,
+
+                        OR: [
+
+                            {
+                                groupId: {
+                                    in: groupIds
+                                }
+                            },
+
+                            {
+                                primarySchedules: {
+
+                                    some: {
+
+                                        status: "ACTIVE",
+
+                                        groupId: {
+                                            in: groupIds
+                                        }
+
+                                    }
+
+                                }
+
+                            },
+
+                            {
+                                replacementSchedules: {
+
+                                    some: {
+
+                                        status: "ACTIVE",
+
+                                        groupId: {
+                                            in: groupIds
+                                        }
+
+                                    }
+
+                                }
+
+                            }
+
+                        ]
+
+                    }
+
+                })
+
+                : Promise.resolve(0),
+
+
+            // ==================================
+            // REPORTS
+            // ==================================
+
+            groupIds.length > 0
+
+                ? prisma.teachingReport.count({
+
+                    where: {
+
+                        groupId: {
+                            in: groupIds
+                        }
+
+                    }
+
+                })
+
+                : Promise.resolve(0),
+
+
+            // ==================================
+            // STUDENT PRESENT
+            // ==================================
+
+            groupIds.length > 0
+
+                ? prisma.attendance.count({
+
+                    where: {
+
+                        groupId: {
+                            in: groupIds
+                        },
+
+                        isPresent: true
+
+                    }
+
+                })
+
+                : Promise.resolve(0),
+
+
+            // ==================================
+            // STUDENT ABSENT
+            // ==================================
+
+            groupIds.length > 0
+
+                ? prisma.attendance.count({
+
+                    where: {
+
+                        groupId: {
+                            in: groupIds
+                        },
+
+                        isPresent: false
+
+                    }
+
+                })
+
+                : Promise.resolve(0),
+
+
+            // ==================================
+            // VOLUNTEER PRESENT
+            // ==================================
+
+            groupIds.length > 0
+
+                ? prisma.volunteerAttendance.count({
+
+                    where: {
+
+                        groupId: {
+                            in: groupIds
+                        },
+
+                        isPresent: true
+
+                    }
+
+                })
+
+                : Promise.resolve(0),
+
+
+            // ==================================
+            // VOLUNTEER ABSENT
+            // ==================================
+
+            groupIds.length > 0
+
+                ? prisma.volunteerAttendance.count({
+
+                    where: {
+
+                        groupId: {
+                            in: groupIds
+                        },
+
+                        isPresent: false
+
+                    }
+
+                })
+
+                : Promise.resolve(0)
+
+        ]);
+
+
+        // ======================================
+        // GROUP ANALYTICS
+        // ======================================
+
+        const [
+
+            studentCounts,
+
+            volunteerCounts,
+
+            reportCounts,
+
+            presentCounts,
+
+            absentCounts
+
+        ] = await Promise.all([
+
+
+            // ==================================
+            // STUDENTS
+            // ==================================
+
+            prisma.student.groupBy({
+
+                by: ["groupId"],
+
+                where: {
+
+                    isActive: true,
+
+                    groupId: {
+                        in: groupIds
+                    }
+
+                },
+
+                _count: {
+                    id: true
                 }
-            }
-            : {})
-    }
-}),
-    // TEACHING REPORTS
-    groupIds.length > 0
-        ? prisma.teachingReport.count({
-            where: {
-                groupId: {
-                    in: groupIds
+
+            }),
+
+
+            // ==================================
+            // VOLUNTEERS
+            // ==================================
+
+            prisma.schedule.groupBy({
+
+                by: ["groupId"],
+
+                where: {
+
+                    status: "ACTIVE",
+
+                    groupId: {
+                        in: groupIds
+                    },
+
+                    volunteer: {
+
+                        role: "VOLUNTEER",
+
+                        status: "APPROVED",
+
+                        isActive: true
+
+                    }
+
+                },
+
+                _count: {
+
+                    volunteerId: true
+
                 }
-            }
-        })
-        : Promise.resolve(0),
 
-    // STUDENT PRESENT
-    groupIds.length > 0
-        ? prisma.attendance.count({
-            where: {
-                groupId: {
-                    in: groupIds
+            }),
+
+
+            // ==================================
+            // REPORTS
+            // ==================================
+
+            prisma.teachingReport.groupBy({
+
+                by: ["groupId"],
+
+                where: {
+
+                    groupId: {
+                        in: groupIds
+                    }
+
                 },
-                isPresent: true
-            }
-        })
-        : Promise.resolve(0),
 
-    // STUDENT ABSENT
-    groupIds.length > 0
-        ? prisma.attendance.count({
-            where: {
-                groupId: {
-                    in: groupIds
+                _count: {
+                    id: true
+                }
+
+            }),
+
+
+            // ==================================
+            // PRESENT
+            // ==================================
+
+            prisma.attendance.groupBy({
+
+                by: ["groupId"],
+
+                where: {
+
+                    groupId: {
+                        in: groupIds
+                    },
+
+                    isPresent: true
+
                 },
-                isPresent: false
-            }
-        })
-        : Promise.resolve(0),
 
-    // VOLUNTEER PRESENT
-    groupIds.length > 0
-        ? prisma.volunteerAttendance.count({
-            where: {
-                groupId: {
-                    in: groupIds
+                _count: {
+                    id: true
+                }
+
+            }),
+
+
+            // ==================================
+            // ABSENT
+            // ==================================
+
+            prisma.attendance.groupBy({
+
+                by: ["groupId"],
+
+                where: {
+
+                    groupId: {
+                        in: groupIds
+                    },
+
+                    isPresent: false
+
                 },
-                isPresent: true
-            }
-        })
-        : Promise.resolve(0),
 
-    // VOLUNTEER ABSENT
-    groupIds.length > 0
-        ? prisma.volunteerAttendance.count({
-            where: {
-                groupId: {
-                    in: groupIds
-                },
-                isPresent: false
-            }
-        })
-        : Promise.resolve(0)
+                _count: {
+                    id: true
+                }
 
-]);
+            })
 
- // ======================================
-// GROUP ANALYTICS
-// ======================================
-
- 
- // ======================================
-// GROUP ANALYTICS
-// OPTIMIZED
-// ======================================
-
-const [
-    studentCounts,
-    volunteerCounts,
-    reportCounts,
-    presentCounts,
-    absentCounts
-] = await Promise.all([
-
-    // STUDENTS
-    prisma.student.groupBy({
-        by: ["groupId"],
-        where: {
-            isActive: true,
-            groupId: {
-                in: groupIds
-            }
-        },
-        _count: {
-            id: true
-        }
-    }),
-
-    // VOLUNTEERS
-    prisma.schedule.groupBy({
-        by: ["groupId"],
-        where: {
-            status: "ACTIVE",
-            groupId: {
-                in: groupIds
-            },
-            volunteer: {
-                role: "VOLUNTEER",
-                status: "APPROVED",
-                isActive: true
-            }
-        },
-        _count: {
-            volunteerId: true
-        }
-    }),
-
-    // REPORTS
-    prisma.teachingReport.groupBy({
-        by: ["groupId"],
-        where: {
-            groupId: {
-                in: groupIds
-            }
-        },
-        _count: {
-            id: true
-        }
-    }),
-
-    // PRESENT
-    prisma.attendance.groupBy({
-        by: ["groupId"],
-        where: {
-            groupId: {
-                in: groupIds
-            },
-            isPresent: true
-        },
-        _count: {
-            id: true
-        }
-    }),
-
-    // ABSENT
-    prisma.attendance.groupBy({
-        by: ["groupId"],
-        where: {
-            groupId: {
-                in: groupIds
-            },
-            isPresent: false
-        },
-        _count: {
-            id: true
-        }
-    })
-
-]);
+        ]);
 
 
-// ======================================
-// CREATE LOOKUP MAPS
-// ======================================
+        // ======================================
+        // LOOKUP MAPS
+        // ======================================
 
-const studentMap = new Map(
-    studentCounts.map(item => [
-        item.groupId,
-        item._count.id
-    ])
-);
-
-const volunteerMap = new Map(
-    volunteerCounts.map(item => [
-        item.groupId,
-        item._count.volunteerId
-    ])
-);
-
-const reportMap = new Map(
-    reportCounts.map(item => [
-        item.groupId,
-        item._count.id
-    ])
-);
-
-const presentMap = new Map(
-    presentCounts.map(item => [
-        item.groupId,
-        item._count.id
-    ])
-);
-
-const absentMap = new Map(
-    absentCounts.map(item => [
-        item.groupId,
-        item._count.id
-    ])
-);
+        const studentMap =
+            new Map(
+                studentCounts.map(
+                    item => [
+                        item.groupId,
+                        item._count.id
+                    ]
+                )
+            );
 
 
-// ======================================
-// BUILD GROUP ANALYTICS
-// ======================================
-
-const groupAnalytics = groups.map(group => {
-
-    const students =
-        studentMap.get(group.id) || 0;
-
-    const volunteers =
-        volunteerMap.get(group.id) || 0;
-
-    const reports =
-        reportMap.get(group.id) || 0;
-
-    const present =
-        presentMap.get(group.id) || 0;
-
-    const absent =
-        absentMap.get(group.id) || 0;
-
-    const attendanceTotal =
-        present + absent;
-
-    const attendancePercentage =
-        attendanceTotal > 0
-            ? Math.round(
-                (present / attendanceTotal) * 100
-            )
-            : 0;
-
-    return {
-        groupId: group.id,
-        groupName: group.name,
-        campId: group.camp.id,
-        campName: group.camp.name,
-        students,
-        volunteers,
-        reports,
-        attendancePercentage
-    };
-
-});
-// ======================================
-// ATTENDANCE PERCENTAGES
-// ======================================
-
-const studentAttendanceTotal =
-    studentPresent + studentAbsent;
-
-const studentAttendancePercentage =
-    studentAttendanceTotal > 0
-        ? Math.round(
-            (studentPresent /
-                studentAttendanceTotal) * 100
-        )
-        : 0;
+        const volunteerMap =
+            new Map(
+                volunteerCounts.map(
+                    item => [
+                        item.groupId,
+                        item._count.volunteerId
+                    ]
+                )
+            );
 
 
-const volunteerAttendanceTotal =
-    volunteerPresent + volunteerAbsent;
+        const reportMap =
+            new Map(
+                reportCounts.map(
+                    item => [
+                        item.groupId,
+                        item._count.id
+                    ]
+                )
+            );
 
-const volunteerAttendancePercentage =
-    volunteerAttendanceTotal > 0
-        ? Math.round(
-            (volunteerPresent /
-                volunteerAttendanceTotal) * 100
-        )
-        : 0;
+
+        const presentMap =
+            new Map(
+                presentCounts.map(
+                    item => [
+                        item.groupId,
+                        item._count.id
+                    ]
+                )
+            );
+
+
+        const absentMap =
+            new Map(
+                absentCounts.map(
+                    item => [
+                        item.groupId,
+                        item._count.id
+                    ]
+                )
+            );
+
+
+        // ======================================
+        // GROUP ANALYTICS
+        // ======================================
+
+        const groupAnalytics =
+            groups.map(group => {
+
+                const students =
+                    studentMap.get(
+                        group.id
+                    ) || 0;
+
+
+                const volunteers =
+                    volunteerMap.get(
+                        group.id
+                    ) || 0;
+
+
+                const reports =
+                    reportMap.get(
+                        group.id
+                    ) || 0;
+
+
+                const present =
+                    presentMap.get(
+                        group.id
+                    ) || 0;
+
+
+                const absent =
+                    absentMap.get(
+                        group.id
+                    ) || 0;
+
+
+                const attendanceTotal =
+                    present + absent;
+
+
+                const attendancePercentage =
+                    attendanceTotal > 0
+
+                        ? Math.round(
+                            (
+                                present /
+                                attendanceTotal
+                            ) * 100
+                        )
+
+                        : 0;
+
+
+                return {
+
+                    groupId:
+                        group.id,
+
+                    groupName:
+                        group.name,
+
+                    campId:
+                        group.camp.id,
+
+                    campName:
+                        group.camp.name,
+
+                    students,
+
+                    volunteers,
+
+                    reports,
+
+                    attendancePercentage
+
+                };
+
+            });
+
+
+        // ======================================
+        // STUDENT ATTENDANCE %
+        // ======================================
+
+        const studentAttendanceTotal =
+            studentPresent +
+            studentAbsent;
+
+
+        const studentAttendancePercentage =
+            studentAttendanceTotal > 0
+
+                ? Math.round(
+                    (
+                        studentPresent /
+                        studentAttendanceTotal
+                    ) * 100
+                )
+
+                : 0;
+
+
+        // ======================================
+        // VOLUNTEER ATTENDANCE %
+        // ======================================
+
+        const volunteerAttendanceTotal =
+            volunteerPresent +
+            volunteerAbsent;
+
+
+        const volunteerAttendancePercentage =
+            volunteerAttendanceTotal > 0
+
+                ? Math.round(
+                    (
+                        volunteerPresent /
+                        volunteerAttendanceTotal
+                    ) * 100
+                )
+
+                : 0;
+
 
         // ======================================
         // RECENT TEACHING ACTIVITY
@@ -436,6 +1087,7 @@ const volunteerAttendancePercentage =
 
         const recentActivity =
             groupIds.length > 0
+
                 ? await prisma.teachingReport.findMany({
 
                     where: {
@@ -451,8 +1103,11 @@ const volunteerAttendancePercentage =
                         volunteer: {
 
                             select: {
+
                                 id: true,
+
                                 fullName: true
+
                             }
 
                         },
@@ -462,13 +1117,17 @@ const volunteerAttendancePercentage =
                             select: {
 
                                 id: true,
+
                                 name: true,
 
                                 camp: {
 
                                     select: {
+
                                         id: true,
+
                                         name: true
+
                                     }
 
                                 }
@@ -480,88 +1139,97 @@ const volunteerAttendancePercentage =
                     },
 
                     orderBy: {
-                        reportDate: "desc"
+
+                        reportDate:
+                            "desc"
+
                     },
 
                     take: 10
 
                 })
+
                 : [];
 
 
-      // ======================================
-// RESPONSE DATA
-// ======================================
+        // ======================================
+        // RESPONSE
+        // ======================================
 
-const responseData = {
+        const responseData = {
 
-    success: true,
+            success: true,
 
-    stats: {
+            stats: {
 
-        totalStudents,
+                totalStudents,
 
-        totalVolunteers,
+                totalVolunteers,
 
-        totalGroups:
-            groups.length,
+                totalGroups:
+                    groups.length,
 
-        totalReports
+                totalReports
 
-    },
+            },
 
-    studentAttendance: {
+            studentAttendance: {
 
-        present:
-            studentPresent,
+                present:
+                    studentPresent,
 
-        absent:
-            studentAbsent,
+                absent:
+                    studentAbsent,
 
-        percentage:
-            studentAttendancePercentage
+                percentage:
+                    studentAttendancePercentage
 
-    },
+            },
 
-    volunteerAttendance: {
+            volunteerAttendance: {
 
-        present:
-            volunteerPresent,
+                present:
+                    volunteerPresent,
 
-        absent:
-            volunteerAbsent,
+                absent:
+                    volunteerAbsent,
 
-        percentage:
-            volunteerAttendancePercentage
+                percentage:
+                    volunteerAttendancePercentage
 
-    },
+            },
 
-    groupAnalytics,
+            groupAnalytics,
 
-    recentActivity
+            recentActivity
 
-};
-
-
-// ======================================
-// SAVE ANALYTICS CACHE
-// ======================================
-
-analyticsCache =
-    responseData;
-
-analyticsCacheTime =
-    Date.now();
+        };
 
 
-// ======================================
-// SEND RESPONSE
-// ======================================
+        // ======================================
+        // CACHE
+        // ======================================
 
-return res.status(200).json(
-    responseData
-);
-        
+        analyticsCache.set(
+
+            cacheKey,
+
+            {
+
+                time:
+                    Date.now(),
+
+                data:
+                    responseData
+
+            }
+
+        );
+
+
+        return res.status(200).json(
+            responseData
+        );
 
     }
 
@@ -585,52 +1253,247 @@ return res.status(200).json(
     }
 
 };
+
+
 // ======================================
 // DOWNLOAD ANALYTICS PDF
+//
+// ADMIN
+// → ALL
+//
+// VOLUNTEER
+// → ASSIGNED GROUPS
 // ======================================
 
-exports.downloadAnalyticsPDF = async (req, res) => {
+exports.downloadAnalyticsPDF = async (
+    req,
+    res
+) => {
 
     try {
 
-        const students =
-            await prisma.student.count({
+        const role =
+            req.user.role;
 
-                where:{
-                    isActive:true
+        const userId =
+            Number(req.user.id);
+
+
+        let where = {};
+
+
+        // ==================================
+        // VOLUNTEER SECURITY
+        // ==================================
+
+        if (
+            role === "VOLUNTEER"
+        ) {
+
+            const {
+                volunteer,
+                groupIds
+            } =
+                await getVolunteerGroupIds(
+                    userId
+                );
+
+
+            if (!volunteer) {
+
+                return res.status(404).json({
+
+                    success: false,
+
+                    message:
+                        "Volunteer account not found."
+
+                });
+
+            }
+
+
+            if (
+                volunteer.status !== "APPROVED" ||
+                !volunteer.isActive
+            ) {
+
+                return res.status(403).json({
+
+                    success: false,
+
+                    message:
+                        "Volunteer account is not active."
+
+                });
+
+            }
+
+
+            if (
+                groupIds.length === 0
+            ) {
+
+                return res.status(403).json({
+
+                    success: false,
+
+                    message:
+                        "No group is assigned to this volunteer."
+
+                });
+
+            }
+
+
+            where = {
+
+                groupId: {
+                    in: groupIds
                 }
+
+            };
+
+        }
+
+
+        // ==================================
+        // INVALID ROLE
+        // ==================================
+
+        else if (
+            role !== "ADMIN"
+        ) {
+
+            return res.status(403).json({
+
+                success: false,
+
+                message:
+                    "Access Denied."
 
             });
 
+        }
 
-        const volunteers =
-            await prisma.user.count({
 
-                where:{
-                    role:"VOLUNTEER",
-                    status:"APPROVED"
+        // ==================================
+        // FETCH PDF DATA
+        // ==================================
+
+        const [
+
+            students,
+
+            volunteers,
+
+            groups,
+
+            reports
+
+        ] = await Promise.all([
+
+
+            prisma.student.count({
+
+                where: {
+
+                    isActive: true,
+
+                    ...(Object.keys(where).length
+                        ? {
+                            groupId:
+                                where.groupId
+                        }
+                        : {})
+
                 }
 
-            });
+            }),
 
 
-        const groups =
-            await prisma.group.count({
+            prisma.user.count({
 
-                where:{
-                    isActive:true
+                where: {
+
+                    role: "VOLUNTEER",
+
+                    status: "APPROVED",
+
+                    isActive: true,
+
+                    ...(Object.keys(where).length
+                        ? {
+
+                            OR: [
+
+                                {
+                                    groupId:
+                                        where.groupId
+                                },
+
+                                {
+                                    primarySchedules: {
+
+                                        some: {
+
+                                            status:
+                                                "ACTIVE",
+
+                                            groupId:
+                                                where.groupId
+
+                                        }
+
+                                    }
+
+                                }
+
+                            ]
+
+                        }
+                        : {})
+
                 }
 
-            });
+            }),
 
 
-        const reports =
-            await prisma.teachingReport.count();
+            prisma.group.count({
+
+                where: {
+
+                    isActive: true,
+
+                    ...(Object.keys(where).length
+                        ? {
+                            id:
+                                where.groupId
+                        }
+                        : {})
+
+                }
+
+            }),
 
 
+            prisma.teachingReport.count({
+
+                where
+
+            })
+
+        ]);
+
+
+        // ==================================
+        // CREATE PDF
+        // ==================================
 
         const doc =
-            new PDFDocument();
+            new PDFDocument({
+                margin: 50
+            });
 
 
         res.setHeader(
@@ -648,33 +1511,35 @@ exports.downloadAnalyticsPDF = async (req, res) => {
         doc.pipe(res);
 
 
-
         doc
-        .fontSize(22)
-        .text(
-            "Slum Swaraj Foundation",
-            {
-                align:"center"
-            }
-        );
+            .fontSize(22)
+            .text(
+                "Slum Swaraj Foundation",
+                {
+                    align: "center"
+                }
+            );
 
 
         doc.moveDown();
 
 
-
         doc
-        .fontSize(16)
-        .text(
-            "Analytics Report"
-        );
+            .fontSize(16)
+            .text(
+
+                role === "VOLUNTEER"
+                    ? "My Group Analytics Report"
+                    : "Analytics Report"
+
+            );
 
 
         doc.moveDown();
 
 
-
-        doc.fontSize(14);
+        doc
+            .fontSize(14);
 
 
         doc.text(
@@ -703,18 +1568,18 @@ exports.downloadAnalyticsPDF = async (req, res) => {
         doc.text(
             `Generated Date : ${
                 new Date()
-                .toLocaleDateString("en-IN")
+                    .toLocaleDateString(
+                        "en-IN"
+                    )
             }`
         );
 
 
         doc.end();
 
-
-
     }
-    catch(error){
 
+    catch (error) {
 
         console.error(
             "PDF Error:",
@@ -722,15 +1587,18 @@ exports.downloadAnalyticsPDF = async (req, res) => {
         );
 
 
-        res.status(500).json({
+        if (!res.headersSent) {
 
-            success:false,
+            return res.status(500).json({
 
-            message:
-            "Unable to generate PDF"
+                success: false,
 
-        });
+                message:
+                    "Unable to generate PDF"
 
+            });
+
+        }
 
     }
 

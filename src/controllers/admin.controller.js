@@ -315,37 +315,39 @@ exports.getDashboardStats = async (req, res) => {
 
         }
 
-        const [
-            totalVolunteers,
-            pendingVolunteers,
-            totalStudents,
-            totalGroups
-        ] = await Promise.all([
+     
+        
+const [
+    totalVolunteers,
+    pendingVolunteers,
+    totalStudents,
+    totalGroups
+] = await Promise.all([
 
-            prisma.user.count({
+    prisma.user.count({
 
-                where: {
-                    role: "VOLUNTEER",
-                    status: "APPROVED"
-                }
+        where: {
+            role: "VOLUNTEER",
+            status: "APPROVED"
+        }
 
-            }),
+    }),
 
-            prisma.user.count({
+    prisma.user.count({
 
-                where: {
-                    role: "VOLUNTEER",
-                    status: "PENDING"
-                }
+        where: {
+            role: "VOLUNTEER",
+            status: "PENDING"
+        }
 
-            }),
+    }),
 
-            prisma.student.count(),
+    prisma.student.count(),
 
-            prisma.group.count()
+    prisma.group.count()
 
-        ]);
-
+]);
+ 
         dashboardCache = {
 
             success: true,

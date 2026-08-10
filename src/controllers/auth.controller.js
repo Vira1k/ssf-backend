@@ -211,7 +211,7 @@ exports.login = async (req, res) => {
 
             {
 
-                expiresIn: "7d"
+                expiresIn: "30d"
 
             }
 

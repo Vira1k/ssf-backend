@@ -5,10 +5,174 @@ const prisma = require("../config/prisma");
 // REPORT CACHE
 // ======================================
 
-let reportsCache = null;
-let reportsCacheTime = 0;
+const reportsCache = new Map();
 
-const REPORT_CACHE_DURATION = 60000; // 60 Seconds
+const REPORT_CACHE_DURATION = 60000;
+
+
+// ======================================
+// CLEAR CACHE
+// ======================================
+
+function clearReportCache() {
+
+    reportsCache.clear();
+
+}
+
+
+// ======================================
+// CACHE KEY
+// ======================================
+
+function getCacheKey(req) {
+
+    const role =
+        req.user?.role || "UNKNOWN";
+
+    const userId =
+        req.user?.id || "UNKNOWN";
+
+    const limit =
+        Number(req.query.limit) || "ALL";
+
+    return `${role}-${userId}-${limit}`;
+
+}
+
+
+// ======================================
+// GET VOLUNTEER ASSIGNED GROUP IDS
+// ======================================
+
+async function getVolunteerGroupIds(volunteerId) {
+
+    const volunteer =
+        await prisma.user.findUnique({
+
+            where: {
+                id: volunteerId
+            },
+
+            select: {
+
+                id: true,
+
+                groupId: true,
+
+                role: true,
+
+                status: true,
+
+                isActive: true,
+
+                primarySchedules: {
+
+                    where: {
+                        status: "ACTIVE"
+                    },
+
+                    select: {
+                        groupId: true
+                    }
+
+                },
+
+                replacementSchedules: {
+
+                    where: {
+                        status: "ACTIVE"
+                    },
+
+                    select: {
+                        groupId: true
+                    }
+
+                }
+
+            }
+
+        });
+
+
+    if (!volunteer) {
+
+        return {
+            volunteer: null,
+            groupIds: []
+        };
+
+    }
+
+
+    const groupIds = new Set();
+
+
+    // --------------------------------------
+    // Direct User Group
+    // --------------------------------------
+
+    if (volunteer.groupId) {
+
+        groupIds.add(
+            volunteer.groupId
+        );
+
+    }
+
+
+    // --------------------------------------
+    // Primary Schedule Groups
+    // --------------------------------------
+
+    for (
+        const schedule
+        of volunteer.primarySchedules
+    ) {
+
+        if (schedule.groupId) {
+
+            groupIds.add(
+                schedule.groupId
+            );
+
+        }
+
+    }
+
+
+    // --------------------------------------
+    // Replacement Schedule Groups
+    // --------------------------------------
+
+    for (
+        const schedule
+        of volunteer.replacementSchedules
+    ) {
+
+        if (schedule.groupId) {
+
+            groupIds.add(
+                schedule.groupId
+            );
+
+        }
+
+    }
+
+
+    return {
+
+        volunteer,
+
+        groupIds:
+            Array.from(groupIds)
+
+    };
+
+}
+
+
 // ======================================
 // ADD TEACHING REPORT
 // ======================================
@@ -17,7 +181,12 @@ exports.addReport = async (req, res) => {
 
     try {
 
-        const volunteerId = req.user.id;
+        const volunteerId =
+            Number(req.user.id);
+
+        const role =
+            req.user.role;
+
 
         const {
             groupId,
@@ -28,11 +197,16 @@ exports.addReport = async (req, res) => {
             reportDate
         } = req.body;
 
-        // ==============================
-        // VALIDATION
-        // ==============================
 
-        if (!groupId || !subject || !whatTaught) {
+        // ==================================
+        // VALIDATION
+        // ==================================
+
+        if (
+            !groupId ||
+            !subject ||
+            !whatTaught
+        ) {
 
             return res.status(400).json({
 
@@ -45,9 +219,174 @@ exports.addReport = async (req, res) => {
 
         }
 
-        // ==============================
+
+        const requestedGroupId =
+            Number(groupId);
+
+
+        if (
+            !Number.isInteger(
+                requestedGroupId
+            )
+        ) {
+
+            return res.status(400).json({
+
+                success: false,
+
+                message:
+                    "Invalid group ID."
+
+            });
+
+        }
+
+
+        // ==================================
+        // VOLUNTEER SECURITY
+        // ==================================
+
+        if (
+            role === "VOLUNTEER"
+        ) {
+
+            const {
+                volunteer,
+                groupIds
+            } =
+                await getVolunteerGroupIds(
+                    volunteerId
+                );
+
+
+            if (!volunteer) {
+
+                return res.status(404).json({
+
+                    success: false,
+
+                    message:
+                        "Volunteer account not found."
+
+                });
+
+            }
+
+
+            if (
+                volunteer.status !== "APPROVED" ||
+                !volunteer.isActive
+            ) {
+
+                return res.status(403).json({
+
+                    success: false,
+
+                    message:
+                        "Your volunteer account is not active."
+
+                });
+
+            }
+
+
+            if (
+                groupIds.length === 0
+            ) {
+
+                return res.status(403).json({
+
+                    success: false,
+
+                    message:
+                        "No group is assigned to your account."
+
+                });
+
+            }
+
+
+            // Volunteer can only submit
+            // report for assigned group
+
+            if (
+                !groupIds.includes(
+                    requestedGroupId
+                )
+            ) {
+
+                return res.status(403).json({
+
+                    success: false,
+
+                    message:
+                        "You can only submit reports for your assigned group."
+
+                });
+
+            }
+
+        }
+
+
+        // ==================================
+        // CHECK GROUP
+        // ==================================
+
+        const group =
+            await prisma.group.findUnique({
+
+                where: {
+
+                    id:
+                        requestedGroupId
+
+                },
+
+                select: {
+
+                    id: true,
+
+                    name: true,
+
+                    isActive: true
+
+                }
+
+            });
+
+
+        if (!group) {
+
+            return res.status(404).json({
+
+                success: false,
+
+                message:
+                    "Group not found."
+
+            });
+
+        }
+
+
+        if (!group.isActive) {
+
+            return res.status(400).json({
+
+                success: false,
+
+                message:
+                    "This group is inactive."
+
+            });
+
+        }
+
+
+        // ==================================
         // CREATE REPORT
-        // ==============================
+        // ==================================
 
         const report =
             await prisma.teachingReport.create({
@@ -56,13 +395,15 @@ exports.addReport = async (req, res) => {
 
                     volunteerId,
 
-                    groupId: Number(groupId),
+                    groupId:
+                        requestedGroupId,
 
                     subject,
 
                     whatTaught,
 
-                    homework: homework || null,
+                    homework:
+                        homework || null,
 
                     nextClassPlan:
                         nextClassPlan || null,
@@ -96,9 +437,13 @@ exports.addReport = async (req, res) => {
 
             });
 
-        // ==============================
-        // RESPONSE
-        // ==============================
+
+        // ==================================
+        // CLEAR CACHE
+        // ==================================
+
+        clearReportCache();
+
 
         return res.status(201).json({
 
@@ -107,7 +452,8 @@ exports.addReport = async (req, res) => {
             message:
                 "Teaching report submitted successfully.",
 
-            data: report
+            data:
+                report
 
         });
 
@@ -133,181 +479,522 @@ exports.addReport = async (req, res) => {
 
 };
 
+
 // ======================================
-// GET ALL TEACHING REPORTS
+// GET TEACHING REPORTS
+//
+// ADMIN
+// → ALL REPORTS
+//
+// VOLUNTEER
+// → ASSIGNED GROUP REPORTS
 // ======================================
 
 exports.getAllReports = async (req, res) => {
 
     try {
 
+        const role =
+            req.user.role;
+
+        const userId =
+            Number(req.user.id);
+
+
+        // ==================================
+        // CACHE
+        // ==================================
+
+        const cacheKey =
+            getCacheKey(req);
+
+        const cached =
+            reportsCache.get(
+                cacheKey
+            );
+
+
         if (
-    reportsCache &&
-    (Date.now() - reportsCacheTime) < REPORT_CACHE_DURATION &&
-    Number(req.query.limit) === 5
-) {
-    return res.status(200).json(reportsCache);
-}
+            cached &&
+            (
+                Date.now() -
+                cached.time
+            ) < REPORT_CACHE_DURATION
+        ) {
 
-        const reports = await prisma.teachingReport.findMany({
+            return res.status(200).json(
+                cached.data
+            );
 
-    take: Number(req.query.limit) || undefined,
-
-    include: {
-
-        volunteer: {
-            select: {
-                id: true,
-                fullName: true
-            }
-        },
-
-        group: {
-    select: {
-        id: true,
-        name: true,
-        camp: {
-            select: {
-                id: true,
-                name: true
-            }
         }
-    }
-}
 
-    },
 
-    orderBy: {
-        reportDate: "desc"
-    }
+        // ==================================
+        // BUILD WHERE
+        // ==================================
 
-});
- 
+        let where = {};
 
-        const formattedReports = reports.map(report => ({
 
-            id: report.id,
+        // ==================================
+        // VOLUNTEER
+        // ==================================
 
-            reportDate: report.reportDate,
+        if (
+            role === "VOLUNTEER"
+        ) {
 
-            subject: report.subject,
+            const {
+                volunteer,
+                groupIds
+            } =
+                await getVolunteerGroupIds(
+                    userId
+                );
 
-            whatTaught: report.whatTaught,
 
-            homework: report.homework,
+            if (!volunteer) {
 
-            nextClassPlan: report.nextClassPlan,
+                return res.status(404).json({
 
-            volunteer: {
+                    success: false,
 
-                id: report.volunteer.id,
+                    message:
+                        "Volunteer account not found."
 
-                fullName: report.volunteer.fullName
-
-            },
-
-            group: {
-
-                id: report.group.id,
-
-                name: report.group.name
-
-            },
-
-            camp: {
-
-                id: report.group.camp.id,
-
-                name: report.group.camp.name
+                });
 
             }
 
-        }));
 
-       reportsCache = {
+            if (
+                volunteer.status !== "APPROVED" ||
+                !volunteer.isActive
+            ) {
 
-    success: true,
+                return res.status(403).json({
 
-    count: formattedReports.length,
+                    success: false,
 
-    data: formattedReports
+                    message:
+                        "Volunteer account is not active."
 
-};
+                });
 
-reportsCacheTime = Date.now();
+            }
 
-return res.status(200).json(reportsCache);
 
-    } catch (error) {
+            if (
+                groupIds.length === 0
+            ) {
 
-        console.error("Get Reports Error:", error);
+                return res.status(200).json({
 
-        res.status(500).json({
+                    success: true,
 
-            success: false,
+                    count: 0,
 
-            message: "Unable to fetch reports."
+                    data: []
 
-        });
+                });
 
-    }
+            }
 
-};
-// ======================================
-// DOWNLOAD REPORTS PDF
-// ======================================
 
-exports.downloadReportsPDF = async (req, res) => {
+            // ==================================
+            // ONLY ASSIGNED GROUPS
+            // ==================================
 
-    try {
+            where = {
 
+                groupId: {
+
+                    in:
+                        groupIds
+
+                }
+
+            };
+
+        }
+
+
+        // ==================================
+        // LIMIT
+        // ==================================
+
+        const requestedLimit =
+            Number(req.query.limit);
+
+
+        const validLimit =
+            Number.isInteger(
+                requestedLimit
+            ) &&
+            requestedLimit > 0
+                ? requestedLimit
+                : undefined;
+
+
+        // ==================================
+        // FETCH REPORTS
+        // ==================================
 
         const reports =
-        await prisma.teachingReport.findMany({
+            await prisma.teachingReport.findMany({
 
-            include: {
+                where,
 
-                volunteer: {
+                ...(validLimit
+                    ? {
+                        take:
+                            validLimit
+                    }
+                    : {}),
 
-                    select: {
+                include: {
 
-                        fullName:true
+                    volunteer: {
+
+                        select: {
+
+                            id: true,
+
+                            fullName: true
+
+                        }
+
+                    },
+
+                    group: {
+
+                        select: {
+
+                            id: true,
+
+                            name: true,
+
+                            camp: {
+
+                                select: {
+
+                                    id: true,
+
+                                    name: true
+
+                                }
+
+                            }
+
+                        }
 
                     }
 
                 },
 
-group: {
-    select: {
-        id: true,
-        name: true,
-        camp: {
-            select: {
-                id: true,
-                name: true
+                orderBy: {
+
+                    reportDate:
+                        "desc"
+
+                }
+
+            });
+
+
+        // ==================================
+        // FORMAT
+        // ==================================
+
+        const formattedReports =
+            reports.map(
+                report => ({
+
+                    id:
+                        report.id,
+
+                    reportDate:
+                        report.reportDate,
+
+                    subject:
+                        report.subject,
+
+                    whatTaught:
+                        report.whatTaught,
+
+                    homework:
+                        report.homework,
+
+                    nextClassPlan:
+                        report.nextClassPlan,
+
+                    volunteer: {
+
+                        id:
+                            report.volunteer.id,
+
+                        fullName:
+                            report.volunteer.fullName
+
+                    },
+
+                    group: {
+
+                        id:
+                            report.group.id,
+
+                        name:
+                            report.group.name
+
+                    },
+
+                    camp: {
+
+                        id:
+                            report.group.camp.id,
+
+                        name:
+                            report.group.camp.name
+
+                    }
+
+                })
+            );
+
+
+        const response = {
+
+            success: true,
+
+            count:
+                formattedReports.length,
+
+            data:
+                formattedReports
+
+        };
+
+
+        // ==================================
+        // CACHE
+        // ==================================
+
+        reportsCache.set(
+
+            cacheKey,
+
+            {
+
+                time:
+                    Date.now(),
+
+                data:
+                    response
+
             }
-        }
+
+        );
+
+
+        return res.status(200).json(
+            response
+        );
+
     }
-}
 
-            },
+    catch (error) {
 
+        console.error(
+            "Get Reports Error:",
+            error
+        );
 
-            orderBy:{
+        return res.status(500).json({
 
-                reportDate:"desc"
+            success: false,
 
-            }
+            message:
+                "Unable to fetch reports."
 
         });
 
+    }
 
+};
+
+
+// ======================================
+// DOWNLOAD REPORTS PDF
+//
+// ADMIN
+// → ALL
+//
+// VOLUNTEER
+// → ASSIGNED GROUPS
+// ======================================
+
+exports.downloadReportsPDF = async (
+    req,
+    res
+) => {
+
+    try {
+
+        const role =
+            req.user.role;
+
+        const userId =
+            Number(req.user.id);
+
+
+        // ==================================
+        // BUILD WHERE
+        // ==================================
+
+        let where = {};
+
+
+        if (
+            role === "VOLUNTEER"
+        ) {
+
+            const {
+                volunteer,
+                groupIds
+            } =
+                await getVolunteerGroupIds(
+                    userId
+                );
+
+
+            if (!volunteer) {
+
+                return res.status(404).json({
+
+                    success: false,
+
+                    message:
+                        "Volunteer account not found."
+
+                });
+
+            }
+
+
+            if (
+                volunteer.status !== "APPROVED" ||
+                !volunteer.isActive
+            ) {
+
+                return res.status(403).json({
+
+                    success: false,
+
+                    message:
+                        "Volunteer account is not active."
+
+                });
+
+            }
+
+
+            if (
+                groupIds.length === 0
+            ) {
+
+                return res.status(200).json({
+
+                    success: false,
+
+                    message:
+                        "No group is assigned to this volunteer."
+
+                });
+
+            }
+
+
+            where = {
+
+                groupId: {
+
+                    in:
+                        groupIds
+
+                }
+
+            };
+
+        }
+
+
+        // ==================================
+        // FETCH REPORTS
+        // ==================================
+
+        const reports =
+            await prisma.teachingReport.findMany({
+
+                where,
+
+                include: {
+
+                    volunteer: {
+
+                        select: {
+
+                            fullName: true
+
+                        }
+
+                    },
+
+                    group: {
+
+                        select: {
+
+                            id: true,
+
+                            name: true,
+
+                            camp: {
+
+                                select: {
+
+                                    id: true,
+
+                                    name: true
+
+                                }
+
+                            }
+
+                        }
+
+                    }
+
+                },
+
+                orderBy: {
+
+                    reportDate:
+                        "desc"
+
+                }
+
+            });
+
+
+        // ==================================
+        // PDF
+        // ==================================
 
         const doc =
-        new PDFDocument({
-            margin:50
-        });
+            new PDFDocument({
 
+                margin: 50
+
+            });
 
 
         res.setHeader(
@@ -322,102 +1009,136 @@ group: {
         );
 
 
-
         doc.pipe(res);
 
 
-
-        // TITLE
-
         doc
-        .fontSize(20)
-        .text(
-            "Slum Swaraj Foundation",
-            {
-                align:"center"
-            }
-        );
+            .fontSize(20)
+            .text(
+                "Slum Swaraj Foundation",
+                {
+                    align: "center"
+                }
+            );
 
 
         doc
-        .fontSize(16)
-        .text(
-            "Teaching Reports",
-            {
-                align:"center"
-            }
-        );
+            .fontSize(16)
+            .text(
+
+                role === "VOLUNTEER"
+                    ? "My Group Teaching Reports"
+                    : "Teaching Reports",
+
+                {
+                    align: "center"
+                }
+
+            );
 
 
         doc.moveDown();
 
 
+        // ==================================
+        // REPORTS
+        // ==================================
 
-        reports.forEach((report,index)=>{
+        reports.forEach(
+            (report, index) => {
+
+                doc
+                    .fontSize(14)
+                    .text(
+                        `Report ${index + 1}`,
+                        {
+                            underline: true
+                        }
+                    );
 
 
-            doc
-            .fontSize(14)
-            .text(
-                `Report ${index+1}`,
-                {
-                    underline:true
-                }
-            );
+                doc.moveDown(0.5);
 
 
-            doc.moveDown(0.5);
+                doc
+                    .fontSize(11)
+                    .text(
 
+`Date: ${
+    new Date(
+        report.reportDate
+    ).toLocaleDateString()
+}
 
+Volunteer: ${
+    report.volunteer?.fullName || "-"
+}
 
-            doc.fontSize(11)
-            .text(
-`Date: ${new Date(report.reportDate).toLocaleDateString()}
+Camp: ${
+    report.group?.camp?.name || "-"
+}
 
-Volunteer: ${report.volunteer?.fullName || "-"}
+Group: ${
+    report.group?.name || "-"
+}
 
-Camp: ${report.group?.camp?.name || "-"}
-
-Group: ${report.group?.name || "-"}
-
-Subject: ${report.subject || "-"}
+Subject: ${
+    report.subject || "-"
+}
 
 Topic Covered:
-${report.whatTaught || "-"}
+${
+    report.whatTaught || "-"
+}
 
 Homework:
-${report.homework || "-"}
+${
+    report.homework || "-"
+}
 
 Next Class Plan:
-${report.nextClassPlan || "-"}
-
+${
+    report.nextClassPlan || "-"
+}
 `
-            );
+
+                    );
 
 
-
-            doc.moveDown();
-
+                doc.moveDown();
 
 
-            if(index !== reports.length-1){
+                if (
+                    index !==
+                    reports.length - 1
+                ) {
 
-                doc.addPage();
+                    doc.addPage();
+
+                }
 
             }
+        );
 
 
-        });
+        if (
+            reports.length === 0
+        ) {
 
+            doc
+                .fontSize(12)
+                .text(
+                    "No teaching reports available."
+                );
+
+        }
 
 
         doc.end();
 
-
-
     }
-    catch(error){
 
+    catch (error) {
 
         console.error(
             "PDF Download Error:",
@@ -425,15 +1146,20 @@ ${report.nextClassPlan || "-"}
         );
 
 
-        res.status(500).json({
+        if (
+            !res.headersSent
+        ) {
 
-            success:false,
+            return res.status(500).json({
 
-            message:
-            "Unable to generate PDF"
+                success: false,
 
-        });
+                message:
+                    "Unable to generate PDF"
 
+            });
+
+        }
 
     }
 

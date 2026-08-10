@@ -8,16 +8,24 @@ const authMiddleware =
 const analyticsController =
     require("../controllers/analytics.controller");
 
+
 // ======================================
 // DOWNLOAD ANALYTICS PDF
+// ADMIN → ALL
+// VOLUNTEER → ASSIGNED GROUP
 // ======================================
 
 router.get(
     "/download",
+    authMiddleware,
     analyticsController.downloadAnalyticsPDF
 );
+
+
 // ======================================
-// ADMIN ANALYTICS
+// GET ANALYTICS
+// ADMIN → ALL
+// VOLUNTEER → ASSIGNED GROUP
 // ======================================
 
 router.get(

@@ -172,6 +172,7 @@ model Schedule {
   replacementVolunteer   User?                   @relation("ReplacementVolunteer", fields: [replacementVolunteerId], references: [id])
   volunteer              User                    @relation("PrimaryVolunteer", fields: [volunteerId], references: [id])
   availabilityResponses  VolunteerAvailability[]
+
   @@index([volunteerId, status])
 }
 

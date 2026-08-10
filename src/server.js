@@ -2,71 +2,93 @@
 // SSF SERVER
 // ======================================
 
+"use strict";
 
-// Scheduler Import
+// ======================================
+// ENVIRONMENT
+// ======================================
+
+require("dotenv").config();
+
+// ======================================
+// PRISMA
+// ======================================
+
+const prisma = require("./config/prisma");
+
+// ======================================
+// APP
+// ======================================
+
+const app = require("./app");
+
+// ======================================
+// SCHEDULER
+// ======================================
 
 const {
     startScheduler
 } = require("./services/scheduler.service");
 
+// ======================================
+// PORT
+// ======================================
 
-
-// Environment
-
-require("dotenv").config();
-
-
-
-// App Import
-
-const app =
-require("./app");
-
-
-
-// Port
-
-const PORT =
-process.env.PORT || 5000;
-
-
+const PORT = process.env.PORT || 5000;
 
 
 // ======================================
 // START SERVER
 // ======================================
 
-
 app.listen(
-PORT,
-()=>{
+    PORT,
+    async () => {
+
+        console.log(
+            "===================================="
+        );
+
+        console.log(
+            "🚀 SSF Teaching Management API"
+        );
+
+        console.log(
+            `🌐 Server Running : http://localhost:${PORT}`
+        );
+
+        console.log(
+            "===================================="
+        );
 
 
-    console.log(
-        "===================================="
-    );
+        // ======================================
+        // WARM DATABASE CONNECTION
+        // ======================================
+
+        try {
+
+            await prisma.$connect();
+
+            console.log(
+                "✅ Database connection warmed"
+            );
+
+        } catch (error) {
+
+            console.error(
+                "❌ Database connection failed:",
+                error.message
+            );
+
+        }
 
 
-    console.log(
-        "🚀 SSF Teaching Management API"
-    );
+        // ======================================
+        // START NOTIFICATION SCHEDULER
+        // ======================================
 
+        startScheduler();
 
-    console.log(
-        `🌐 Server Running : http://localhost:${PORT}`
-    );
-
-
-    console.log(
-        "===================================="
-    );
-
-
-
-    // Start Notification Scheduler
-
-    startScheduler();
-
-
-
-});
+    }
+);

@@ -1,201 +1,150 @@
 const webpush = require("web-push");
-
 const prisma = require("../config/prisma");
 
-
-// ===============================
-// VAPID CONFIG
-// ===============================
+// ======================================
+// VAPID CONFIGURATION
+// ======================================
 
 webpush.setVapidDetails(
-
-    "mailto:ssf@gmail.com",
-
+    process.env.VAPID_EMAIL,
     process.env.VAPID_PUBLIC_KEY,
-
     process.env.VAPID_PRIVATE_KEY
-
 );
 
-
-
-
-// ===============================
+// ======================================
 // SEND PUSH TO USER
-// ===============================
+// ======================================
 
 exports.sendPushToUser = async (
     userId,
     title,
-    message
-)=>{
+    message,
+    url = "/volunteer-dashboard.html"
+) => {
 
-
-    try{
-
+    try {
 
         const subscriptions =
-        await prisma.pushSubscription.findMany({
+            await prisma.pushSubscription.findMany({
+                where: {
+                    userId
+                }
+            });
 
-            where:{
-                userId
-            }
-
-        });
-
-
-
-        if(subscriptions.length === 0){
-
+        if (subscriptions.length === 0) {
 
             console.log(
-                "❌ No subscription found for user:",
-                userId
+                `ℹ️ No push subscription found for user: ${userId}`
             );
 
-
-            return;
-
+            return {
+                success: false,
+                sent: 0
+            };
 
         }
 
+        const payload = JSON.stringify({
 
+            title,
 
+            body: message,
 
+            icon: "/assets/logo.webp",
 
-        const payload =
-        JSON.stringify({
+            badge: "/assets/logo.webp",
 
-            title:title,
-
-            body:message,
-
-            icon:"/assets/logo.png",
-
-            data:{
-                url:"/volunteer-dashboard.html"
+            data: {
+                url
             }
 
         });
 
+        let sent = 0;
 
-
-
-
-
-
-        for(const sub of subscriptions){
-
+        for (const sub of subscriptions) {
 
             const pushSubscription = {
 
+                endpoint: sub.endpoint,
 
-                endpoint:
-                sub.endpoint,
+                keys: {
 
+                    p256dh: sub.p256dh,
 
-                keys:{
-
-
-                    p256dh:
-                    sub.p256dh,
-
-
-                    auth:
-                    sub.auth
-
+                    auth: sub.auth
 
                 }
-
 
             };
 
-
-
-
-            try{
-
+            try {
 
                 await webpush.sendNotification(
-
                     pushSubscription,
-
                     payload
-
                 );
 
-
+                sent++;
 
                 console.log(
-                    "✅ Push sent successfully to user:",
-                    userId
+                    `✅ Push sent to user ${userId}`
                 );
-
-
 
             }
 
-
-
-            catch(error){
-
+            catch (error) {
 
                 console.error(
-
-                    "❌ Push failed:",
+                    `❌ Push failed for user ${userId}:`,
                     error.statusCode,
                     error.message
-
                 );
 
+                // ======================================
+                // REMOVE EXPIRED SUBSCRIPTION
+                // ======================================
 
-
-                // remove expired subscription
-
-                if(
+                if (
                     error.statusCode === 404 ||
                     error.statusCode === 410
-                ){
-
+                ) {
 
                     await prisma.pushSubscription.delete({
-
-                        where:{
-                            id:sub.id
+                        where: {
+                            id: sub.id
                         }
-
                     });
 
-
                     console.log(
-                        "🗑️ Removed expired subscription"
+                        `🗑️ Removed expired subscription ${sub.id}`
                     );
-
 
                 }
 
-
             }
-
 
         }
 
-
+        return {
+            success: sent > 0,
+            sent
+        };
 
     }
 
-
-
-    catch(error){
-
+    catch (error) {
 
         console.error(
-            "Send Push Error:",
+            "❌ Send Push Error:",
             error
         );
 
+        return {
+            success: false,
+            sent: 0
+        };
 
     }
-
 
 };

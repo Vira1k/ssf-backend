@@ -1,7 +1,8 @@
 const prisma = require("../config/prisma");
 
-
-
+const {
+    sendPushToUser
+} = require("../services/push.service");
 
 // ======================================
 // CREATE ANNOUNCEMENT (ADMIN)
@@ -11,116 +12,391 @@ exports.createAnnouncement = async (req, res) => {
 
     try {
 
-
         const {
             title,
             message,
-            targetType,
-            targetId
+            targetType
         } = req.body;
 
-
-
         const createdBy =
-        req.user?.id || req.body.createdBy;
+            req.user?.id || req.body.createdBy;
 
 
+        // ======================================
+        // VALIDATION
+        // ======================================
 
-        if(!title || !message){
+        if (!title || !message) {
 
             return res.status(400).json({
 
-                success:false,
+                success: false,
 
                 message:
-                "Title and message are required."
+                    "Title and message are required."
 
             });
 
         }
 
 
+        if (!createdBy) {
 
+            return res.status(400).json({
+
+                success: false,
+
+                message:
+                    "Admin information is required."
+
+            });
+
+        }
+
+
+        const validTargets = [
+            "ALL",
+            "MAHAGUN",
+            "GOLFLINK",
+            "BOTH"
+        ];
+
+
+        if (!validTargets.includes(targetType)) {
+
+            return res.status(400).json({
+
+                success: false,
+
+                message:
+                    "Invalid announcement target."
+
+            });
+
+        }
+
+
+        // ======================================
+        // CREATE ANNOUNCEMENT
+        // ======================================
 
         const announcement =
+            await prisma.announcement.create({
 
-        await prisma.announcement.create({
+                data: {
 
-            data:{
+                    title: title.trim(),
 
+                    message: message.trim(),
 
-                title,
+                    targetType,
 
-                message,
+                    targetId: null,
 
-                targetType,
+                    createdBy:
+                        Number(createdBy)
 
+                }
 
-                targetId:
-                targetId
-                ?
-                Number(targetId)
-                :
-                null,
+            });
 
 
-                createdBy:
-                Number(createdBy)
+        // ======================================
+        // FIND TARGET VOLUNTEERS
+        // ======================================
 
+        let volunteers = [];
+
+
+        // ======================================
+        // ALL VOLUNTEERS
+        // ======================================
+
+        if (targetType === "ALL") {
+
+            volunteers =
+                await prisma.user.findMany({
+
+                    where: {
+
+                        role: "VOLUNTEER",
+
+                        status: "APPROVED",
+
+                        isActive: true
+
+                    },
+
+                    select: {
+
+                        id: true
+
+                    }
+
+                });
+
+        }
+
+
+        // ======================================
+        // CAMP TARGET
+        // ======================================
+
+        else {
+
+            let campNames = [];
+
+
+            if (targetType === "MAHAGUN") {
+
+                campNames = ["MAHAGUN"];
 
             }
 
 
-        });
+            if (targetType === "GOLFLINK") {
+
+                campNames = ["GOLFLINK"];
+
+            }
 
 
+            if (targetType === "BOTH") {
+
+                campNames = [
+                    "MAHAGUN",
+                    "GOLFLINK"
+                ];
+
+            }
 
 
+            // ======================================
+            // FIND VOLUNTEERS CONNECTED TO CAMP
+            // ======================================
+
+            volunteers =
+                await prisma.user.findMany({
+
+                    where: {
+
+                        role: "VOLUNTEER",
+
+                        status: "APPROVED",
+
+                        isActive: true,
+
+                        OR: [
+
+                            // Volunteer directly assigned
+                            // to a group
+
+                            {
+
+                                group: {
+
+                                    camp: {
+
+                                        name: {
+
+                                            in: campNames,
+
+                                            mode: "insensitive"
+
+                                        }
+
+                                    }
+
+                                }
+
+                            },
 
 
-        return res.json({
+                            // Volunteer has primary schedule
+                            // in the camp
 
-            success:true,
+                            {
+
+                                primarySchedules: {
+
+                                    some: {
+
+                                        status: "ACTIVE",
+
+                                        group: {
+
+                                            camp: {
+
+                                                name: {
+
+                                                    in: campNames,
+
+                                                    mode: "insensitive"
+
+                                                }
+
+                                            }
+
+                                        }
+
+                                    }
+
+                                }
+
+                            },
+
+
+                            // Volunteer is replacement
+                            // for a schedule in the camp
+
+                            {
+
+                                replacementSchedules: {
+
+                                    some: {
+
+                                        status: "ACTIVE",
+
+                                        group: {
+
+                                            camp: {
+
+                                                name: {
+
+                                                    in: campNames,
+
+                                                    mode: "insensitive"
+
+                                                }
+
+                                            }
+
+                                        }
+
+                                    }
+
+                                }
+
+                            }
+
+                        ]
+
+                    },
+
+                    select: {
+
+                        id: true
+
+                    }
+
+                });
+
+        }
+
+
+        // ======================================
+        // SEND PUSH NOTIFICATIONS
+        // ======================================
+
+        let notificationsSent = 0;
+
+
+        for (const volunteer of volunteers) {
+
+            try {
+
+                const result =
+                    await sendPushToUser(
+
+                        volunteer.id,
+
+                        `📢 ${title.trim()}`,
+
+                        message.trim(),
+
+                        "/volunteer-dashboard.html"
+
+                    );
+
+
+                if (
+                    result &&
+                    result.success
+                ) {
+
+                    notificationsSent += result.sent || 0;
+
+                }
+
+            }
+
+            catch (pushError) {
+
+                console.error(
+
+                    `Push failed for volunteer ${volunteer.id}:`,
+
+                    pushError
+
+                );
+
+            }
+
+        }
+
+
+        // ======================================
+        // SUCCESS
+        // ======================================
+
+        return res.status(201).json({
+
+            success: true,
 
             message:
-            "Announcement created successfully.",
+                "Announcement created successfully.",
 
-            data:announcement
+            data: announcement,
+
+            notification: {
+
+                targetType,
+
+                volunteersFound:
+                    volunteers.length,
+
+                notificationsSent
+
+            }
 
         });
-
 
 
     }
 
-    catch(error){
-
+    catch (error) {
 
         console.error(
-            "Create Announcement Error:",
-            error
-        );
 
+            "Create Announcement Error:",
+
+            error
+
+        );
 
 
         return res.status(500).json({
 
-            success:false,
+            success: false,
 
             message:
-            "Unable to create announcement."
+                "Unable to create announcement."
 
         });
 
-
     }
 
-
 };
-
-
-
-
 
 
 
